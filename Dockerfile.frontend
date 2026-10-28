@@ -31,8 +31,8 @@ ENV VITE_FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY \
 # Copy dependency specifications
 COPY package.json bun.lock ./
 
-# Install all dependencies including devDependencies (forcing --production=false)
-RUN bun install --frozen-lockfile --production=false || bun install --production=false
+# Install all dependencies including devDependencies
+RUN NODE_ENV=development bun install --frozen-lockfile || NODE_ENV=development bun install
 
 # Copy source code and build configuration
 COPY . .
