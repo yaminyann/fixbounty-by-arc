@@ -18,6 +18,7 @@ export const BOUNTY_BOARD_ADDRESS = (
 ) as `0x${string}`
 
 export const EXPLORER_BASE = TARGET_CHAIN.explorerBase
+export const ARC_EXPLORER_URL = EXPLORER_BASE
 
 export function explorerTx(hash: `0x${string}`) {
   return buildTxExplorerUrl(TARGET_CHAIN_ID, hash)

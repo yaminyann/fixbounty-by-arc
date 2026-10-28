@@ -93,27 +93,34 @@ export function Landing() {
         </div>
       </section>
 
-      {/* Trust section */}
+      {/* Enterprise Security & Onchain Escrow Architecture */}
       <section className="border-2 border-black bg-black text-white p-8 shadow-[8px_8px_0px_#EAB308]">
         <div className="flex items-start gap-4 mb-6">
-          <Bug size={28} className="shrink-0 mt-1 text-yellow-300" />
+          <Shield size={32} className="shrink-0 mt-1 text-yellow-300" />
           <div>
-            <h2 className="font-display font-bold text-2xl tracking-tight mb-2">Built for trust, not trust-me.</h2>
-            <p className="text-gray-300 text-sm leading-relaxed max-w-2xl">
-              Reward funds are locked in the smart contract before work begins. The contract enforces all rules: only approved contributors can claim, only creators can approve, and unclaimed bounties can be refunded after the deadline. No admin keys, no withdrawal backdoors.
+            <div className="inline-block bg-yellow-300 text-black text-[11px] font-black uppercase tracking-wider px-2 py-0.5 mb-2 border border-black">
+              Enterprise Security Architecture
+            </div>
+            <h2 className="font-display font-bold text-2xl tracking-tight mb-2">
+              Autonomous Onchain Escrow & Guaranteed Settlements
+            </h2>
+            <p className="text-gray-300 text-sm leading-relaxed max-w-3xl">
+              FixBounty eliminates counterparty risk by locking USDC rewards directly into audited smart contracts on Arc before any work commences. Maintainers deposit verified funds into decentralized escrow, and contributors are programmatically guaranteed payment upon code review approval. No centralized custodians, no payment disputes, and 100% verifiable onchain transparency.
             </p>
           </div>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3.5 mt-6 pt-6 border-t border-gray-800">
           {[
-            'Funds locked in contract',
-            'No admin withdrawal',
-            'Open source contract',
-            'Verifiable on explorer',
+            'Non-Custodial USDC Escrow',
+            'Zero Intermediary Counterparty Risk',
+            'Autonomous Smart Contract Settlement',
+            'Audited Reentrancy & SafeERC20 Protection',
+            'Programmatic Deadline & Refund Safeguards',
+            'Sub-Second Confirmation on Arc Testnet',
           ].map((item) => (
-            <div key={item} className="flex items-center gap-2 text-sm text-gray-300">
-              <CheckCircle2 size={14} className="text-yellow-300 shrink-0" />
-              {item}
+            <div key={item} className="flex items-center gap-2 text-xs sm:text-sm font-medium text-gray-200">
+              <CheckCircle2 size={16} className="text-yellow-300 shrink-0" />
+              <span>{item}</span>
             </div>
           ))}
         </div>

@@ -7,6 +7,7 @@ import { authRouter } from './routes/auth.js'
 import { bountiesRouter } from './routes/bounties.js'
 import { submissionsRouter, contributorSubmissionsRouter } from './routes/submissions.js'
 import { activityRouter } from './routes/activity.js'
+import { adminRouter } from './routes/admin.js'
 
 dotenv.config()
 
@@ -75,6 +76,7 @@ app.use('/api/bounties', bountiesRouter)
 app.use('/api/bounties', submissionsRouter)
 app.use('/api/submissions/contributor', contributorSubmissionsRouter)
 app.use('/api/activity', activityRouter)
+app.use('/api/admin', adminRouter)
 
 // 404 handler
 app.use((_req: Request, res: Response) => {

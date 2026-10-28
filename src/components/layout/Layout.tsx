@@ -18,6 +18,7 @@ import {
   History,
   ExternalLink,
   Loader2,
+  Shield,
 } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
 
@@ -184,10 +185,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
                       <Link
                         to="/activity"
                         onClick={() => setProfileDropdownOpen(false)}
-                        className="flex items-center gap-2.5 px-4 py-2 text-xs font-bold hover:bg-yellow-300 transition-colors border-b-2 border-gray-100"
+                        className="flex items-center gap-2.5 px-4 py-2 text-xs font-bold hover:bg-yellow-300 transition-colors"
                       >
                         <Activity size={14} />
                         Activity Log
+                      </Link>
+
+                      <Link
+                        to="/admin"
+                        onClick={() => setProfileDropdownOpen(false)}
+                        className="flex items-center gap-2.5 px-4 py-2 text-xs font-bold hover:bg-yellow-300 transition-colors border-b-2 border-gray-100"
+                      >
+                        <Shield size={14} className="text-yellow-600" />
+                        Admin Console
                       </Link>
 
                       <button
@@ -294,6 +304,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     <UserIcon size={16} />
                     Profile & Wallet
                   </Link>
+                  <Link
+                    to="/admin"
+                    onClick={() => setMenuOpen(false)}
+                    className="flex items-center gap-3 px-4 py-3 text-sm font-bold hover:bg-yellow-300"
+                  >
+                    <Shield size={16} className="text-yellow-600" />
+                    Admin Console
+                  </Link>
                   <button
                     onClick={() => {
                       setMenuOpen(false)
@@ -362,6 +380,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <Link to="/help" className="hover:text-black font-medium transition-colors">Help & FAQ</Link>
             <a href="https://explorer.testnet.arc.io" target="_blank" rel="noopener noreferrer" className="hover:text-black font-medium transition-colors">Arc Explorer</a>
             <Link to="/help#security" className="hover:text-black font-medium transition-colors">Security Architecture</Link>
+            <Link to="/admin" className="hover:text-black font-medium transition-colors">Admin</Link>
           </div>
           <p className="text-gray-500 text-xs text-center sm:text-right">Arc Testnet — All USDC is test currency</p>
         </div>

@@ -400,3 +400,134 @@ export async function apiRecordActivity(data: {
     console.warn('[API] apiRecordActivity failed:', err)
   }
 }
+
+// =============================================================================
+// Admin Panel API Client Functions
+// =============================================================================
+
+export interface ApiAdminStats {
+  bounties: {
+    total: number
+    totalRewards: string
+    open: number
+    funded: number
+    approved: number
+    claimed: number
+    refunded: number
+    cancelled: number
+  }
+  submissions: {
+    total: number
+    pending: number
+    approved: number
+    rejected: number
+  }
+  users: {
+    total: number
+    uniqueCreators: number
+    uniqueSubmitters: number
+  }
+  system: {
+    network: string
+    contractAddress: string
+    usdcAddress: string
+    rpcUrl: string
+  }
+}
+
+export interface ApiAdminSubmission extends ApiSubmission {
+  onchainId?: number | null
+  bountyTitle: string
+  bountyReward: string
+  bountyStatus: number
+  bountyCreatorWallet: string
+  submitterEmail?: string | null
+  submitterDisplayName?: string | null
+}
+
+export interface ApiAdminBounty extends ApiBounty {
+  creatorEmail?: string | null
+  creatorDisplayName?: string | null
+  submissionsCount?: number
+}
+
+async function getAdminHeaders(adminKey?: string): Promise<Record<string, string>> {
+  const headers = await getAuthHeaders()
+  const key = adminKey || sessionStorage.getItem('fixbounty_admin_key') || (import.meta as { env?: { VITE_ADMIN_PASSWORD?: string } }).env?.VITE_ADMIN_PASSWORD
+  if (key) {
+    headers['x-admin-key'] = key
+  }
+  return headers
+}
+
+export async function apiVerifyAdmin(password?: string): Promise<{ valid: boolean; authMethod?: string; error?: string }> {
+  try {
+    const headers = await getAuthHeaders()
+    if (password) headers['x-admin-key'] = password
+
+    const res = await fetch(`${API_BASE}/admin/verify`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ password }),
+    })
+    const data = (await res.json()) as { valid: boolean; authMethod?: string; error?: string }
+    return data
+  } catch (err) {
+    return { valid: false, error: (err as Error).message }
+  }
+}
+
+export async function apiGetAdminStats(adminKey?: string): Promise<ApiAdminStats | null> {
+  try {
+    const headers = await getAdminHeaders(adminKey)
+    const res = await fetch(`${API_BASE}/admin/stats`, { headers })
+    if (!res.ok) return null
+    const data = await res.json()
+    return data as ApiAdminStats
+  } catch (err) {
+    console.warn('[API] apiGetAdminStats failed:', err)
+    return null
+  }
+}
+
+export async function apiGetAdminBounties(
+  params: { limit?: number; offset?: number; status?: string | number; search?: string },
+  adminKey?: string
+): Promise<{ bounties: ApiAdminBounty[]; total: number; limit: number; offset: number }> {
+  try {
+    const q = new URLSearchParams()
+    if (params.limit !== undefined) q.set('limit', String(params.limit))
+    if (params.offset !== undefined) q.set('offset', String(params.offset))
+    if (params.status !== undefined && params.status !== 'all') q.set('status', String(params.status))
+    if (params.search) q.set('search', params.search)
+
+    const headers = await getAdminHeaders(adminKey)
+    const res = await fetch(`${API_BASE}/admin/bounties?${q.toString()}`, { headers })
+    if (!res.ok) return { bounties: [], total: 0, limit: params.limit || 20, offset: params.offset || 0 }
+    return (await res.json()) as { bounties: ApiAdminBounty[]; total: number; limit: number; offset: number }
+  } catch (err) {
+    console.warn('[API] apiGetAdminBounties failed:', err)
+    return { bounties: [], total: 0, limit: params.limit || 20, offset: params.offset || 0 }
+  }
+}
+
+export async function apiGetAdminSubmissions(
+  params: { limit?: number; offset?: number; status?: string; search?: string },
+  adminKey?: string
+): Promise<{ submissions: ApiAdminSubmission[]; total: number; limit: number; offset: number }> {
+  try {
+    const q = new URLSearchParams()
+    if (params.limit !== undefined) q.set('limit', String(params.limit))
+    if (params.offset !== undefined) q.set('offset', String(params.offset))
+    if (params.status && params.status !== 'all') q.set('status', params.status)
+    if (params.search) q.set('search', params.search)
+
+    const headers = await getAdminHeaders(adminKey)
+    const res = await fetch(`${API_BASE}/admin/submissions?${q.toString()}`, { headers })
+    if (!res.ok) return { submissions: [], total: 0, limit: params.limit || 20, offset: params.offset || 0 }
+    return (await res.json()) as { submissions: ApiAdminSubmission[]; total: number; limit: number; offset: number }
+  } catch (err) {
+    console.warn('[API] apiGetAdminSubmissions failed:', err)
+    return { submissions: [], total: 0, limit: params.limit || 20, offset: params.offset || 0 }
+  }
+}

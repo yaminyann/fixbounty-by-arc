@@ -5,6 +5,7 @@ import { getRecentActivity, type ActivityEntry } from '@/lib/firestore'
 import { apiGetActivity } from '@/lib/api'
 import { explorerTx } from '@/lib/contract'
 import { formatAddress } from '@/lib/bountyTypes'
+import { Pagination } from '@/components/ui/Pagination'
 
 const TYPE_LABELS: Record<ActivityEntry['type'], string> = {
   created: 'Bounty created',
@@ -30,6 +31,8 @@ export function ActivityFeed() {
   const [activities, setActivities] = useState<ActivityEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   const load = async () => {
     setLoading(true)
@@ -98,32 +101,47 @@ export function ActivityFeed() {
           <p className="text-sm text-gray-500">Activity appears here as bounties are created and funded.</p>
         </div>
       ) : (
-        <div className="border-2 border-black bg-white shadow-[4px_4px_0px_black]">
-          {activities.map((a, i) => (
-            <div key={i} className={`flex items-start gap-4 px-5 py-4 ${i < activities.length - 1 ? 'border-b border-gray-100' : ''}`}>
-              <span className={`px-2 py-0.5 text-xs font-bold border border-black shrink-0 ${TYPE_COLORS[a.type]}`}>
-                {TYPE_LABELS[a.type]}
-              </span>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium">{a.message}</p>
-                {a.actorAddress && (
-                  <p className="text-xs text-gray-400 mt-0.5">{formatAddress(a.actorAddress)}</p>
-                )}
+        <div className="space-y-4">
+          <div className="border-2 border-black bg-white shadow-[4px_4px_0px_black]">
+            {activities.slice((page - 1) * pageSize, page * pageSize).map((a, i, arr) => (
+              <div key={a.id || i} className={`flex items-start gap-4 px-5 py-4 ${i < arr.length - 1 ? 'border-b border-gray-100' : ''}`}>
+                <span className={`px-2 py-0.5 text-xs font-bold border border-black shrink-0 ${TYPE_COLORS[a.type]}`}>
+                  {TYPE_LABELS[a.type]}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium">{a.message}</p>
+                  {a.actorAddress && (
+                    <p className="text-xs text-gray-400 mt-0.5">{formatAddress(a.actorAddress)}</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {a.txHash && (
+                    <a href={explorerTx(a.txHash as `0x${string}`)} target="_blank" rel="noopener noreferrer"
+                      className="text-gray-400 hover:text-black transition-colors">
+                      <ExternalLink size={13} />
+                    </a>
+                  )}
+                  <Link to={`/bounty/${a.bountyId}`}
+                    className="text-xs font-medium border-2 border-black px-2 py-0.5 hover:bg-yellow-300 transition-colors">
+                    #{a.bountyId}
+                  </Link>
+                </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {a.txHash && (
-                  <a href={explorerTx(a.txHash as `0x${string}`)} target="_blank" rel="noopener noreferrer"
-                    className="text-gray-400 hover:text-black transition-colors">
-                    <ExternalLink size={13} />
-                  </a>
-                )}
-                <Link to={`/bounty/${a.bountyId}`}
-                  className="text-xs font-medium border-2 border-black px-2 py-0.5 hover:bg-yellow-300 transition-colors">
-                  #{a.bountyId}
-                </Link>
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
+
+          <Pagination
+            currentPage={page}
+            totalPages={Math.ceil(activities.length / pageSize)}
+            totalItems={activities.length}
+            pageSize={pageSize}
+            pageSizeOptions={[5, 10, 20]}
+            onPageChange={(p) => setPage(p)}
+            onPageSizeChange={(s) => {
+              setPageSize(s)
+              setPage(1)
+            }}
+          />
         </div>
       )}
     </div>

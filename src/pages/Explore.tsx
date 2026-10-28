@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react'
 import { Search, SlidersHorizontal, RefreshCw } from 'lucide-react'
 import { useBountyCount, useBounties } from '@/hooks/useBounty'
 import { BountyCard } from '@/components/ui/BountyCard'
+import { Pagination } from '@/components/ui/Pagination'
 import { BountyStatus } from '@/lib/bountyTypes'
 import { getRecentBountyMetas, type BountyMeta } from '@/lib/firestore'
 import { apiGetBounties } from '@/lib/api'
@@ -14,7 +15,6 @@ const STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: String(BountyStatus.Claimed), label: 'Claimed' },
 ]
 
-const PAGE_SIZE = 12
 
 export function Explore() {
   const { count, isLoading: countLoading, refetch: refetchCount } = useBountyCount()
@@ -24,6 +24,7 @@ export function Explore() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(12)
   const [metas, setMetas] = useState<Record<number, BountyMeta>>({})
 
   useEffect(() => {
@@ -71,8 +72,8 @@ export function Explore() {
     return list
   }, [bounties, statusFilter, search, metas])
 
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
-  const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const totalPages = Math.ceil(filtered.length / pageSize)
+  const paged = filtered.slice((page - 1) * pageSize, page * pageSize)
 
   const handleRefresh = () => {
     void refetchCount()
@@ -158,27 +159,22 @@ export function Explore() {
           </div>
 
           {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-center gap-2 pt-4">
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
-                className="border-2 border-black px-3 py-1.5 text-sm font-bold hover:bg-yellow-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                Prev
-              </button>
-              <span className="text-sm font-medium tabular-nums">
-                {page} / {totalPages}
-              </span>
-              <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
-                className="border-2 border-black px-3 py-1.5 text-sm font-bold hover:bg-yellow-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                Next
-              </button>
-            </div>
-          )}
+          <Pagination
+            currentPage={page}
+            totalPages={totalPages}
+            totalItems={filtered.length}
+            pageSize={pageSize}
+            pageSizeOptions={[6, 12, 24, 48]}
+            onPageChange={(newPage) => {
+              setPage(newPage)
+              window.scrollTo({ top: 0, behavior: 'smooth' })
+            }}
+            onPageSizeChange={(newSize) => {
+              setPageSize(newSize)
+              setPage(1)
+            }}
+            className="mt-6"
+          />
         </>
       )}
     </div>

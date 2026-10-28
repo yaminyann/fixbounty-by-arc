@@ -37,6 +37,9 @@ services:
       ARC_RPC_URL: ${ARC_RPC_URL:-https://rpc.testnet.arc.io}
       BOUNTY_BOARD_ADDRESS: ${VITE_BOUNTY_BOARD_ADDRESS:-0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb}
       FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-focus-timeer-project}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-fixbounty_admin_2026_arc}
+      ADMIN_SECRET: ${ADMIN_SECRET:-fixbounty_admin_2026_arc}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-yaminv75@gmail.com,admin@fixbounty.io}
     networks:
       - fixbounty-net
     healthcheck:
@@ -60,6 +63,8 @@ services:
         VITE_FIREBASE_MEASUREMENT_ID: ${VITE_FIREBASE_MEASUREMENT_ID}
         VITE_BOUNTY_BOARD_ADDRESS: ${VITE_BOUNTY_BOARD_ADDRESS:-0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb}
         ARC_RPC_URL: ${ARC_RPC_URL:-https://rpc.testnet.arc.io}
+        VITE_ADMIN_PASSWORD: ${VITE_ADMIN_PASSWORD:-fixbounty_admin_2026_arc}
+        VITE_ADMIN_EMAILS: ${VITE_ADMIN_EMAILS:-yaminv75@gmail.com,admin@fixbounty.io}
     restart: unless-stopped
     depends_on:
       backend:

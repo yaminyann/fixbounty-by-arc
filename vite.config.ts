@@ -11,7 +11,7 @@ export default defineConfig({
     dedupe: ['react', 'react-dom'],
   },
   build: {
-    target: 'es2022',
+    target: 'esnext',
     sourcemap: false,
     reportCompressedSize: false,
     chunkSizeWarningLimit: 2500,
@@ -20,8 +20,17 @@ export default defineConfig({
       output: {
         manualChunks: (id) => {
           if (id.includes('node_modules')) {
-            if (id.includes('viem') || id.includes('wagmi') || id.includes('connectkit') || id.includes('@walletconnect')) {
-              return 'web3-vendor'
+            if (id.includes('connectkit')) {
+              return 'connectkit-vendor'
+            }
+            if (id.includes('wagmi')) {
+              return 'wagmi-vendor'
+            }
+            if (id.includes('viem')) {
+              return 'viem-vendor'
+            }
+            if (id.includes('@walletconnect')) {
+              return 'wc-vendor'
             }
             if (id.includes('firebase')) {
               return 'firebase-vendor'
