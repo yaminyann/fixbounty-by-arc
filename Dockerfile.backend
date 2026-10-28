@@ -1,0 +1,27 @@
+FROM oven/bun:1.2-alpine
+
+WORKDIR /app
+
+# Install curl for healthcheck
+RUN apk add --no-cache curl
+
+# Copy dependency manifests
+COPY package.json bun.lock ./
+
+# Install dependencies
+RUN bun install --frozen-lockfile
+
+# Copy application and server source
+COPY server/ ./server/
+COPY contracts/ ./contracts/
+
+ENV NODE_ENV=production
+ENV PORT=4000
+
+EXPOSE 4000
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:4000/health || exit 1
+
+# Automatically runs migrations and starts the server
+CMD ["bun", "run", "server/src/index.ts"]

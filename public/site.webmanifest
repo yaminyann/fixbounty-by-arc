@@ -1,0 +1,20 @@
+{
+  "name": "FixBounty — Onchain Bounties for Open Source",
+  "short_name": "FixBounty",
+  "description": "Post and earn USDC bounties for open-source bug fixes on Arc Testnet.",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "theme_color": "#FDE047",
+  "background_color": "#FAFAF8",
+  "display": "standalone"
+}

@@ -1,0 +1,31 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // User profile: anyone can read public profiles; only authenticated owner can write their own profile
+    match /users/{uid} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Bounty off-chain metadata: public read; authenticated users can write/update
+    match /bounties/{id} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow update: if request.auth != null && (resource.data.creatorUid == request.auth.uid || request.resource.data.creatorUid == request.auth.uid);
+    }
+
+    // Submissions: public read; authenticated contributors can create/update their own submissions
+    match /submissions/{id} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow update: if request.auth != null && resource.data.contributorUid == request.auth.uid;
+    }
+
+    // Activity log: public read; authenticated users can append events
+    match /activity/{id} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow update, delete: if false; // append-only audit trail
+    }
+  }
+}

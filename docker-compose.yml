@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fixbounty-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fixbounty}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fixbounty_secure_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-fixbounty}
+    volumes:
+      - fixbounty_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - fixbounty-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fixbounty} -d ${POSTGRES_DB:-fixbounty}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: fixbounty-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-fixbounty}:${POSTGRES_PASSWORD:-fixbounty_secure_pass}@postgres:5432/${POSTGRES_DB:-fixbounty}
+      ARC_RPC_URL: ${ARC_RPC_URL:-https://rpc.testnet.arc.io}
+      BOUNTY_BOARD_ADDRESS: ${VITE_BOUNTY_BOARD_ADDRESS:-0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb}
+      FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-focus-timeer-project}
+    ports:
+      - "4000:4000"
+    networks:
+      - fixbounty-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: fixbounty-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "5173:80"
+    networks:
+      - fixbounty-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  fixbounty_pgdata:
+    name: fixbounty_pgdata
+
+networks:
+  fixbounty-net:
+    name: fixbounty-net
+    driver: bridge

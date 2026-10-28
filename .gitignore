@@ -1,0 +1,48 @@
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+
+
+# Exclude documentation directory from GitHub push as requested (kept locally)
+docs/
+
+# Agent skills
+.agents/
+skills-lock.json
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Production build artifacts
+dist/
+build/
+
+# Foundry / Smart contract build artifacts
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Logs & debug files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+bun.lockb
+console.jsonl
+
+# Secret keys & service account credentials
+*serviceAccountKey*.json
+*credentials*.json
+*.pem
+*.key
+private_key*
+
+# OS metadata
+.DS_Store
+Thumbs.db

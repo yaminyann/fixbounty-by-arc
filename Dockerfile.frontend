@@ -1,0 +1,35 @@
+# Stage 1: Build the Vite production bundle
+FROM oven/bun:1.2-alpine AS builder
+
+WORKDIR /app
+
+# Copy dependency specifications
+COPY package.json bun.lock ./
+
+# Install dependencies
+RUN bun install --frozen-lockfile
+
+# Copy source code and build config
+COPY . .
+
+# Build the production assets
+RUN bun x vite build
+
+# Stage 2: Serve using high-performance Nginx with reverse proxy
+FROM nginx:alpine
+
+# Install curl for health checking
+RUN apk add --no-cache curl
+
+# Copy custom Nginx configuration
+COPY nginx.conf /etc/nginx/nginx.conf
+
+# Copy compiled static assets from builder stage
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost/ || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]
