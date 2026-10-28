@@ -1,19 +1,9 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
-import { nodePolyfills } from 'vite-plugin-node-polyfills'
 
 export default defineConfig({
-  plugins: [
-    react(),
-    nodePolyfills({
-      globals: {
-        Buffer: true,
-        global: true,
-        process: true,
-      },
-    }),
-  ],
+  plugins: [react()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -23,8 +13,10 @@ export default defineConfig({
   build: {
     target: 'es2022',
     sourcemap: false,
+    reportCompressedSize: false,
     chunkSizeWarningLimit: 2500,
     rollupOptions: {
+      maxParallelFileOps: 2,
       output: {
         manualChunks: (id) => {
           if (id.includes('node_modules')) {
@@ -60,9 +52,6 @@ export default defineConfig({
       'sonner',
       'clsx',
       'tailwind-merge',
-      'vite-plugin-node-polyfills/shims/buffer',
-      'vite-plugin-node-polyfills/shims/global',
-      'vite-plugin-node-polyfills/shims/process',
     ],
   },
   server: {

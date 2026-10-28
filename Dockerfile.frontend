@@ -1,10 +1,14 @@
 # Stage 1: Build the Vite production bundle
-FROM oven/bun:1.2-slim AS builder
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
-# Ensure devDependencies (vite, typescript, tailwindcss, etc.) are installed even if Coolify/Docker sets NODE_ENV=production
+# Install Bun for lockfile-compliant dependency installation
+RUN npm install -g bun@1.2.4
+
+# Ensure devDependencies are installed and V8 memory is managed cleanly
 ENV NODE_ENV=development
+ENV NODE_OPTIONS="--max-old-space-size=1536"
 
 # Accept build arguments from Coolify/Docker
 ARG VITE_FIREBASE_API_KEY
@@ -25,20 +29,19 @@ ENV VITE_FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY \
     VITE_FIREBASE_APP_ID=$VITE_FIREBASE_APP_ID \
     VITE_FIREBASE_MEASUREMENT_ID=$VITE_FIREBASE_MEASUREMENT_ID \
     VITE_BOUNTY_BOARD_ADDRESS=$VITE_BOUNTY_BOARD_ADDRESS \
-    VITE_ARC_RPC_URL=$ARC_RPC_URL \
-    NODE_OPTIONS="--max-old-space-size=2048"
+    VITE_ARC_RPC_URL=$ARC_RPC_URL
 
 # Copy dependency specifications
 COPY package.json bun.lock ./
 
-# Install all dependencies including devDependencies
-RUN NODE_ENV=development bun install --frozen-lockfile || NODE_ENV=development bun install
+# Install dependencies using Bun for speed and exact lockfile resolution
+RUN bun install --frozen-lockfile || bun install
 
 # Copy source code and build configuration
 COPY . .
 
-# Build the production static assets
-RUN bun run build
+# Build production assets using Node.js directly (respecting V8 memory options)
+RUN npm run build
 
 # Stage 2: Serve using high-performance Nginx with reverse proxy
 FROM nginx:alpine
