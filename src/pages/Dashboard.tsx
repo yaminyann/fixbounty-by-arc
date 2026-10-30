@@ -409,10 +409,10 @@ export function Dashboard() {
       </div>
 
       {/* Tabs */}
-      <div className="flex flex-wrap border-2 border-black w-fit bg-white shadow-[2px_2px_0px_black]">
+      <div className="flex flex-col sm:flex-row border-2 border-black w-full sm:w-fit bg-white shadow-[2px_2px_0px_black]">
         <button
           onClick={() => setSearchParams({ tab: 'created' })}
-          className={`px-5 py-2.5 text-sm font-bold capitalize border-r-2 border-black transition-colors flex items-center gap-2 ${
+          className={`px-4 sm:px-5 py-2.5 text-xs sm:text-sm font-bold capitalize border-b-2 sm:border-b-0 sm:border-r-2 border-black transition-colors flex items-center justify-center sm:justify-start gap-2 ${
             activeTab === 'created' ? 'bg-black text-white' : 'bg-white hover:bg-yellow-300'
           }`}
         >
@@ -421,7 +421,7 @@ export function Dashboard() {
         </button>
         <button
           onClick={() => setSearchParams({ tab: 'submitted' })}
-          className={`px-5 py-2.5 text-sm font-bold capitalize border-r-2 border-black transition-colors flex items-center gap-2 ${
+          className={`px-4 sm:px-5 py-2.5 text-xs sm:text-sm font-bold capitalize border-b-2 sm:border-b-0 sm:border-r-2 border-black transition-colors flex items-center justify-center sm:justify-start gap-2 ${
             activeTab === 'submitted' ? 'bg-black text-white' : 'bg-white hover:bg-yellow-300'
           }`}
         >
@@ -430,7 +430,7 @@ export function Dashboard() {
         </button>
         <button
           onClick={() => setSearchParams({ tab: 'history' })}
-          className={`px-5 py-2.5 text-sm font-bold capitalize transition-colors flex items-center gap-2 ${
+          className={`px-4 sm:px-5 py-2.5 text-xs sm:text-sm font-bold capitalize transition-colors flex items-center justify-center sm:justify-start gap-2 ${
             activeTab === 'history' ? 'bg-black text-white' : 'bg-white hover:bg-yellow-300'
           }`}
         >

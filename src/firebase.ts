@@ -40,14 +40,14 @@ if (isFirebaseConfigured) {
     dbInstance = getFirestore(appInstance)
     googleProviderInstance = new GoogleAuthProvider()
   } catch (err) {
-    console.error('[FixBounty] Failed to initialize Firebase:', err)
+    console.error('[TaskFi] Failed to initialize Firebase:', err)
   }
 } else if (import.meta.env.DEV) {
   const missing = Object.entries(rawConfig)
     .filter(([, v]) => !v || v.includes('your_'))
     .map(([k]) => k)
   console.warn(
-    '[FixBounty] Firebase config missing or unconfigured env vars:',
+    '[TaskFi] Firebase config missing or unconfigured env vars:',
     missing.join(', '),
     '— Auth and Firestore features will be inactive until you configure .env. Onchain features remain fully functional.',
   )

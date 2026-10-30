@@ -14,7 +14,7 @@ export function NetworkGuard({ children }: { children: React.ReactNode }) {
       <div className="flex-1">
         <p className="font-bold text-sm">Wrong network</p>
         <p className="text-sm mt-0.5">
-          FixBounty runs on <strong>{TARGET_CHAIN.name}</strong>. Please switch to continue.
+          TaskFi runs on <strong>{TARGET_CHAIN.name}</strong>. Please switch to continue.
         </p>
       </div>
       <button

@@ -8,6 +8,8 @@ import { bountiesRouter } from './routes/bounties.js'
 import { submissionsRouter, contributorSubmissionsRouter } from './routes/submissions.js'
 import { activityRouter } from './routes/activity.js'
 import { adminRouter } from './routes/admin.js'
+import { usersRouter } from './routes/users.js'
+import { mediaRouter } from './routes/media.js'
 
 dotenv.config()
 
@@ -26,7 +28,7 @@ app.use(
   })
 )
 
-app.use(express.json({ limit: '2mb' }))
+app.use(express.json({ limit: '10mb' }))
 
 // Request logging in development
 if (process.env.NODE_ENV !== 'production') {
@@ -77,6 +79,8 @@ app.use('/api/bounties', submissionsRouter)
 app.use('/api/submissions/contributor', contributorSubmissionsRouter)
 app.use('/api/activity', activityRouter)
 app.use('/api/admin', adminRouter)
+app.use('/api/users', usersRouter)
+app.use('/api/media', mediaRouter)
 
 // 404 handler
 app.use((_req: Request, res: Response) => {
@@ -93,25 +97,25 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 
 // Start server after checking database and applying migrations
 async function bootstrap() {
-  console.log('[FixBounty Server] Initializing...')
+  console.log('[TaskFi Server] Initializing...')
   try {
     const dbReady = await testConnection()
     if (dbReady) {
       await runMigrations()
     } else {
-      console.warn('[FixBounty Server] Database not reachable at startup. Will retry on request.')
+      console.warn('[TaskFi Server] Database not reachable at startup. Will retry on request.')
     }
   } catch (err) {
-    console.error('[FixBounty Server] Startup migration failed:', err)
+    console.error('[TaskFi Server] Startup migration failed:', err)
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[FixBounty Server] Listening on http://0.0.0.0:${PORT}`)
-    console.log(`[FixBounty Server] Health check available at http://localhost:${PORT}/health`)
+    console.log(`[TaskFi Server] Listening on http://0.0.0.0:${PORT}`)
+    console.log(`[TaskFi Server] Health check available at http://localhost:${PORT}/health`)
   })
 }
 
 bootstrap().catch((err) => {
-  console.error('[FixBounty Server] Fatal bootstrap error:', err)
+  console.error('[TaskFi Server] Fatal bootstrap error:', err)
   process.exit(1)
 })

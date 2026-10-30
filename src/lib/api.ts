@@ -1,5 +1,5 @@
 /**
- * FixBounty - Backend PostgreSQL API Client
+ * TaskFi - Backend PostgreSQL API Client
  * Connects frontend with the Express/PostgreSQL backend services.
  */
 
@@ -31,6 +31,11 @@ export interface ApiUser {
   email: string | null
   displayName: string | null
   photoUrl: string | null
+  bio?: string
+  github?: string
+  twitter?: string
+  website?: string
+  isAdmin?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -53,12 +58,25 @@ export interface ApiBounty {
   title: string
   description: string
   acceptanceCriteria: string
+  objectives?: string | null
+  requirements?: string | null
+  rules?: string | null
+  eligibility?: string | null
+  deliverables?: string | null
+  submissionInstructions?: string | null
   rewardAmount: string
   tokenSymbol: string
   tokenAddress: string
   deadline: string
   tags: string[]
   links: string[]
+  categorySlug?: string | null
+  categoryName?: string | null
+  categoryColor?: string | null
+  moderationStatus?: 'pending' | 'approved' | 'rejected'
+  moderationNote?: string | null
+  imageUrl?: string | null
+  contractVersion?: number
   txHash: string | null
   onchainStatus: number
   createdAt: string
@@ -73,10 +91,13 @@ export interface ApiSubmission {
   onchainBountyId: number | null
   submitterUserId: string | null
   submitterWallet: string
+  title?: string | null
   description: string
+  solutionDetails?: string | null
   pullRequestUrl: string
   attachments: string[]
   status: 'pending' | 'approved' | 'rejected'
+  seqNumber?: number
   txHash: string | null
   createdAt: string
   updatedAt: string
@@ -162,18 +183,46 @@ export async function apiLinkWallet(address: string, signature: string): Promise
 }
 
 // ---------------------------------------------------------------------------
+// Categories
+// ---------------------------------------------------------------------------
+
+export interface ApiCategory {
+  id: number
+  slug: string
+  name: string
+  description?: string
+  color: string
+}
+
+export async function apiGetCategories(): Promise<ApiCategory[]> {
+  try {
+    const res = await fetch(`${API_BASE}/bounties/categories`)
+    if (!res.ok) return []
+    const data = (await res.json()) as { categories: ApiCategory[] }
+    return data.categories || []
+  } catch (err) {
+    console.warn('[API] apiGetCategories failed:', err)
+    return []
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Bounties
 // ---------------------------------------------------------------------------
 
 export async function apiGetBounties(params?: {
-  status?: number
+  status?: number | string
+  category?: string
+  moderation_status?: string
   search?: string
   limit?: number
   offset?: number
 }): Promise<ApiBounty[]> {
   try {
     const q = new URLSearchParams()
-    if (params?.status !== undefined) q.set('status', String(params.status))
+    if (params?.status !== undefined && params.status !== 'all') q.set('status', String(params.status))
+    if (params?.category && params.category !== 'all') q.set('category', params.category)
+    if (params?.moderation_status && params.moderation_status !== 'all') q.set('moderation_status', params.moderation_status)
     if (params?.search) q.set('search', params.search)
     if (params?.limit) q.set('limit', String(params.limit))
     if (params?.offset) q.set('offset', String(params.offset))
@@ -219,10 +268,19 @@ export async function apiSaveBounty(data: {
   title: string
   description: string
   acceptanceCriteria: string
+  objectives?: string
+  requirements?: string
+  rules?: string
+  eligibility?: string
+  deliverables?: string
+  submissionInstructions?: string
   rewardAmount: string
   deadline: string
   tags?: string[]
   links?: string[]
+  categorySlug?: string
+  imageUrl?: string
+  contractVersion?: number
   txHash?: string
 }): Promise<ApiBounty> {
   const headers = await getAuthHeaders()
@@ -245,6 +303,13 @@ export async function apiUpdateBounty(
     title?: string
     description?: string
     acceptanceCriteria?: string
+    objectives?: string
+    requirements?: string
+    rules?: string
+    eligibility?: string
+    deliverables?: string
+    submissionInstructions?: string
+    imageUrl?: string
     tags?: string[]
     links?: string[]
   }
@@ -295,7 +360,9 @@ export async function apiCreateSubmission(
   bountyId: string | number,
   data: {
     submitterWallet: string
+    title?: string
     description: string
+    solutionDetails?: string
     pullRequestUrl: string
     attachments?: string[]
     txHash?: string
@@ -409,12 +476,28 @@ export interface ApiAdminStats {
   bounties: {
     total: number
     totalRewards: string
+    totalRewardsRaw?: string
+    totalFunded?: string
+    totalClaimed?: string
+    totalActiveEscrow?: string
+    totalRefunded?: string
     open: number
     funded: number
     approved: number
     claimed: number
     refunded: number
     cancelled: number
+  }
+  revenue?: {
+    totalEscrowFundedUsdc: string
+    contributorPayoutsSettledUsdc: string
+    activeEscrowLockedUsdc: string
+    refundedToCreatorsUsdc: string
+    collectedPlatformFeesUsdc: string
+    pendingPlatformFeesUsdc: string
+    feeEventsCount: number
+    network: string
+    activeContractModel: string
   }
   submissions: {
     total: number
@@ -453,7 +536,11 @@ export interface ApiAdminBounty extends ApiBounty {
 
 async function getAdminHeaders(adminKey?: string): Promise<Record<string, string>> {
   const headers = await getAuthHeaders()
-  const key = adminKey || sessionStorage.getItem('fixbounty_admin_key') || (import.meta as { env?: { VITE_ADMIN_PASSWORD?: string } }).env?.VITE_ADMIN_PASSWORD
+  const key =
+    adminKey ||
+    sessionStorage.getItem('taskfi_admin_key') ||
+    sessionStorage.getItem('fixbounty_admin_key') ||
+    (import.meta as { env?: { VITE_ADMIN_PASSWORD?: string } }).env?.VITE_ADMIN_PASSWORD
   if (key) {
     headers['x-admin-key'] = key
   }
@@ -530,4 +617,245 @@ export async function apiGetAdminSubmissions(
     console.warn('[API] apiGetAdminSubmissions failed:', err)
     return { submissions: [], total: 0, limit: params.limit || 20, offset: params.offset || 0 }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Moderation, Revenue & Audit Logs
+// ---------------------------------------------------------------------------
+
+export interface ApiPendingBounty {
+  id: string
+  bounty_id: number
+  onchainId: number
+  title: string
+  description: string
+  rewardAmount: string
+  creatorWallet: string
+  category_slug: string | null
+  category_name: string | null
+  tags: string[]
+  imageUrl?: string | null
+  moderationStatus: string
+  created_at: string
+}
+
+export interface ApiRevenueSummary {
+  total_claims: string
+  total_fees: string
+  total_rewards: string
+  network: string
+}
+
+export interface ApiFeeEvent {
+  id: number
+  bounty_id: number
+  tx_hash: string
+  block_number: number
+  contributor_addr: string
+  fee_amount: string
+  reward_amount: string
+  treasury_addr: string
+  network: string
+  recorded_at: string
+}
+
+export interface ApiAdminLogEntry {
+  id: number
+  admin_uid: string
+  action: string
+  target_type: string
+  target_id: string
+  detail: Record<string, unknown>
+  notes: string | null
+  created_at: string
+  display_name: string | null
+  email: string | null
+}
+
+export async function apiGetPendingBounties(adminKey?: string): Promise<ApiPendingBounty[]> {
+  try {
+    const headers = await getAdminHeaders(adminKey)
+    const res = await fetch(`${API_BASE}/admin/pending`, { headers })
+    if (!res.ok) return []
+    const data = (await res.json()) as { bounties: ApiPendingBounty[] }
+    return data.bounties || []
+  } catch (err) {
+    console.warn('[API] apiGetPendingBounties failed:', err)
+    return []
+  }
+}
+
+export async function apiApproveBounty(
+  id: number | string,
+  note?: string,
+  adminKey?: string
+): Promise<{ ok: boolean; message?: string }> {
+  const headers = await getAdminHeaders(adminKey)
+  const res = await fetch(`${API_BASE}/admin/bounties/${id}/approve`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ note }),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({ error: 'Failed to approve bounty' }))) as { error?: string }
+    throw new Error(err.error || 'Failed to approve bounty')
+  }
+  return res.json() as Promise<{ ok: boolean; message?: string }>
+}
+
+export async function apiRejectBounty(
+  id: number | string,
+  note: string,
+  adminKey?: string
+): Promise<{ ok: boolean; message?: string }> {
+  const headers = await getAdminHeaders(adminKey)
+  const res = await fetch(`${API_BASE}/admin/bounties/${id}/reject`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ note }),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({ error: 'Failed to reject bounty' }))) as { error?: string }
+    throw new Error(err.error || 'Failed to reject bounty')
+  }
+  return res.json() as Promise<{ ok: boolean; message?: string }>
+}
+
+export async function apiGetAdminRevenue(
+  adminKey?: string
+): Promise<{ summary: ApiRevenueSummary[]; recent: ApiFeeEvent[]; v1_note?: string }> {
+  try {
+    const headers = await getAdminHeaders(adminKey)
+    const res = await fetch(`${API_BASE}/admin/revenue`, { headers })
+    if (!res.ok) return { summary: [], recent: [] }
+    return (await res.json()) as { summary: ApiRevenueSummary[]; recent: ApiFeeEvent[]; v1_note?: string }
+  } catch (err) {
+    console.warn('[API] apiGetAdminRevenue failed:', err)
+    return { summary: [], recent: [] }
+  }
+}
+
+export async function apiRecordFeeEvent(
+  eventData: {
+    bountyId: number
+    txHash: string
+    blockNumber: number
+    contributorAddr: string
+    rewardAmount: string
+    feeAmount: string
+    treasuryAddr: string
+    network?: string
+  },
+  adminKey?: string
+): Promise<void> {
+  try {
+    const headers = await getAdminHeaders(adminKey)
+    await fetch(`${API_BASE}/admin/fee-events`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(eventData),
+    })
+  } catch (err) {
+    console.warn('[API] apiRecordFeeEvent failed:', err)
+  }
+}
+
+export async function apiGetAdminLog(adminKey?: string): Promise<ApiAdminLogEntry[]> {
+  try {
+    const headers = await getAdminHeaders(adminKey)
+    const res = await fetch(`${API_BASE}/admin/log`, { headers })
+    if (!res.ok) return []
+    const data = (await res.json()) as { log: ApiAdminLogEntry[] }
+    return data.log || []
+  } catch (err) {
+    console.warn('[API] apiGetAdminLog failed:', err)
+    return []
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Developer Profile & Leaderboard
+// ---------------------------------------------------------------------------
+
+export interface ApiLeaderboardEntry {
+  id: string
+  displayName: string | null
+  photoUrl: string | null
+  github: string | null
+  walletAddress: string
+  submissionsCount: number
+  claimedCount: number
+  totalEarned: string
+}
+
+export async function apiUpdateProfile(data: {
+  displayName?: string
+  bio?: string
+  github?: string
+  twitter?: string
+  website?: string
+}): Promise<void> {
+  const headers = await getAuthHeaders()
+  const res = await fetch(`${API_BASE}/users/profile`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({ error: 'Failed to update profile' }))) as { error?: string }
+    throw new Error(err.error || 'Failed to update profile')
+  }
+}
+
+export async function apiGetLeaderboard(): Promise<ApiLeaderboardEntry[]> {
+  try {
+    const res = await fetch(`${API_BASE}/users/leaderboard`)
+    if (!res.ok) return []
+    const data = (await res.json()) as { leaderboard: ApiLeaderboardEntry[] }
+    return data.leaderboard || []
+  } catch (err) {
+    console.warn('[API] apiGetLeaderboard failed:', err)
+    return []
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Media & Image Upload API
+// ---------------------------------------------------------------------------
+
+export interface ApiUploadImageResult {
+  success: boolean
+  id: string
+  url: string
+  mimeType: string
+  sizeBytes: number
+  width?: number | null
+  height?: number | null
+  createdAt: string
+}
+
+export async function apiUploadImage(
+  dataUriOrBase64: string,
+  options?: { originalName?: string; mimeType?: string; width?: number; height?: number }
+): Promise<ApiUploadImageResult> {
+  const headers = await getAuthHeaders()
+  const res = await fetch(`${API_BASE}/media/upload`, {
+    method: 'POST',
+    headers: {
+      ...headers,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      data: dataUriOrBase64,
+      originalName: options?.originalName,
+      mimeType: options?.mimeType || 'image/webp',
+      width: options?.width,
+      height: options?.height,
+    }),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({ error: 'Upload failed' }))) as { error?: string }
+    throw new Error(err.error || `Upload failed with status ${res.status}`)
+  }
+  return res.json()
 }

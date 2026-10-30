@@ -21,7 +21,16 @@ import {
   Check,
   LogOut,
   SlidersHorizontal,
+  Clock,
+  CheckCircle,
+  XCircle,
+  BarChart3,
+  TrendingUp,
+  Tag,
+  Shield,
+  FileText,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
 import { StatusBadge } from '@/components/ui/StatusBadge'
 import { Pagination } from '@/components/ui/Pagination'
@@ -30,19 +39,29 @@ import {
   apiGetAdminBounties,
   apiGetAdminSubmissions,
   apiGetActivity,
+  apiGetPendingBounties,
+  apiApproveBounty,
+  apiRejectBounty,
+  apiGetAdminRevenue,
+  apiGetAdminLog,
   type ApiAdminStats,
   type ApiAdminBounty,
   type ApiAdminSubmission,
   type ApiActivity,
+  type ApiPendingBounty,
+  type ApiRevenueSummary,
+  type ApiFeeEvent,
+  type ApiAdminLogEntry,
 } from '@/lib/api'
 import { BOUNTY_BOARD_ADDRESS, ARC_EXPLORER_URL } from '@/lib/contract'
+import { formatAddress, formatUsdcAmount } from '@/lib/bountyTypes'
 
 // Configured admin credentials from environment or defaults
 const ADMIN_PASSWORD_ENV =
-  (import.meta as { env?: { VITE_ADMIN_PASSWORD?: string } }).env?.VITE_ADMIN_PASSWORD || 'fixbounty_admin_2026_arc'
+  (import.meta as { env?: { VITE_ADMIN_PASSWORD?: string } }).env?.VITE_ADMIN_PASSWORD || 'taskfi_admin_2026_arc'
 
 const ADMIN_EMAILS_ENV = (
-  (import.meta as { env?: { VITE_ADMIN_EMAILS?: string } }).env?.VITE_ADMIN_EMAILS || 'yaminv75@gmail.com,admin@fixbounty.io'
+  (import.meta as { env?: { VITE_ADMIN_EMAILS?: string } }).env?.VITE_ADMIN_EMAILS || 'yaminv75@gmail.com,admin@taskfi.io,admin@fixbounty.io'
 )
   .toLowerCase()
   .split(',')
@@ -50,30 +69,55 @@ const ADMIN_EMAILS_ENV = (
   .filter(Boolean)
 
 export function Admin() {
-  const { user } = useAuth()
+  const { user, isAdmin } = useAuth()
 
   // Authentication state
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    return sessionStorage.getItem('fixbounty_admin_authenticated') === 'true'
+    return (
+      sessionStorage.getItem('taskfi_admin_authenticated') === 'true' ||
+      sessionStorage.getItem('fixbounty_admin_authenticated') === 'true'
+    )
   })
   const [passkeyInput, setPasskeyInput] = useState('')
   const [authError, setAuthError] = useState<string | null>(null)
   const [authMethod, setAuthMethod] = useState<'passkey' | 'google' | null>(() => {
-    return (sessionStorage.getItem('fixbounty_admin_auth_method') as 'passkey' | 'google') || null
+    return (
+      (sessionStorage.getItem('taskfi_admin_auth_method') as 'passkey' | 'google') ||
+      (sessionStorage.getItem('fixbounty_admin_auth_method') as 'passkey' | 'google') ||
+      null
+    )
   })
 
-  // Auto-authenticate if logged-in Google email is whitelisted
+  // Auto-authenticate if logged-in user is admin or Google email is whitelisted
   useEffect(() => {
-    if (user?.email && ADMIN_EMAILS_ENV.includes(user.email.toLowerCase())) {
+    if (isAdmin || (user?.email && ADMIN_EMAILS_ENV.includes(user.email.toLowerCase()))) {
       setIsAuthenticated(true)
       setAuthMethod('google')
-      sessionStorage.setItem('fixbounty_admin_authenticated', 'true')
-      sessionStorage.setItem('fixbounty_admin_auth_method', 'google')
+      sessionStorage.setItem('taskfi_admin_authenticated', 'true')
+      sessionStorage.setItem('taskfi_admin_auth_method', 'google')
     }
-  }, [user])
+  }, [user, isAdmin])
 
   // Active Tab
-  const [activeTab, setActiveTab] = useState<'overview' | 'bounties' | 'submissions' | 'activity'>('overview')
+  const [activeTab, setActiveTab] = useState<
+    'overview' | 'moderation' | 'revenue' | 'bounties' | 'submissions' | 'activity' | 'audit_log'
+  >('overview')
+
+  // Moderation state
+  const [pendingBounties, setPendingBounties] = useState<ApiPendingBounty[]>([])
+  const [pendingLoading, setPendingLoading] = useState(false)
+  const [rejectModal, setRejectModal] = useState<{ bountyId: number; title: string } | null>(null)
+  const [rejectNote, setRejectNote] = useState('')
+  const [rejecting, setRejecting] = useState(false)
+
+  // Revenue state
+  const [revenueSummary, setRevenueSummary] = useState<ApiRevenueSummary[]>([])
+  const [recentFees, setRecentFees] = useState<ApiFeeEvent[]>([])
+  const [revenueLoading, setRevenueLoading] = useState(false)
+
+  // Admin Audit Log state
+  const [adminLogs, setAdminLogs] = useState<ApiAdminLogEntry[]>([])
+  const [adminLogsLoading, setAdminLogsLoading] = useState(false)
 
   // Stats state
   const [stats, setStats] = useState<ApiAdminStats | null>(null)
@@ -122,9 +166,9 @@ export function Admin() {
     if (passkeyInput.trim() === ADMIN_PASSWORD_ENV.trim()) {
       setIsAuthenticated(true)
       setAuthMethod('passkey')
-      sessionStorage.setItem('fixbounty_admin_authenticated', 'true')
-      sessionStorage.setItem('fixbounty_admin_auth_method', 'passkey')
-      sessionStorage.setItem('fixbounty_admin_key', passkeyInput.trim())
+      sessionStorage.setItem('taskfi_admin_authenticated', 'true')
+      sessionStorage.setItem('taskfi_admin_auth_method', 'passkey')
+      sessionStorage.setItem('taskfi_admin_key', passkeyInput.trim())
     } else {
       setAuthError('Invalid Admin Passkey. Please check your credentials in .env.')
     }
@@ -133,6 +177,9 @@ export function Admin() {
   const handleLogout = () => {
     setIsAuthenticated(false)
     setAuthMethod(null)
+    sessionStorage.removeItem('taskfi_admin_authenticated')
+    sessionStorage.removeItem('taskfi_admin_auth_method')
+    sessionStorage.removeItem('taskfi_admin_key')
     sessionStorage.removeItem('fixbounty_admin_authenticated')
     sessionStorage.removeItem('fixbounty_admin_auth_method')
     sessionStorage.removeItem('fixbounty_admin_key')
@@ -198,42 +245,136 @@ export function Admin() {
     }
   }, [activityPage, activityPageSize])
 
-  // Trigger data fetching on auth or tab change
-  useEffect(() => {
-    if (!isAuthenticated) return
-    if (activeTab === 'overview') {
-      void fetchStats()
-      void fetchBounties()
-      void fetchSubmissions()
-    } else if (activeTab === 'bounties') {
-      void fetchBounties()
-    } else if (activeTab === 'submissions') {
-      void fetchSubmissions()
-    } else if (activeTab === 'activity') {
-      void fetchActivity()
+  // Fetch Pending Moderation Bounties
+  const fetchPending = useCallback(async () => {
+    setPendingLoading(true)
+    try {
+      const list = await apiGetPendingBounties()
+      setPendingBounties(list)
+    } finally {
+      setPendingLoading(false)
     }
-  }, [isAuthenticated, activeTab, fetchStats, fetchBounties, fetchSubmissions, fetchActivity])
+  }, [])
 
-  // Refresh current view
-  const handleRefresh = () => {
-    if (activeTab === 'overview') {
+  // Fetch Revenue & Treasury
+  const fetchRevenue = useCallback(async () => {
+    setRevenueLoading(true)
+    try {
+      const data = await apiGetAdminRevenue()
+      setRevenueSummary(data.summary || [])
+      setRecentFees(data.recent || [])
+    } finally {
+      setRevenueLoading(false)
+    }
+  }, [])
+
+  // Fetch Admin Audit Log
+  const fetchAdminLog = useCallback(async () => {
+    setAdminLogsLoading(true)
+    try {
+      const logs = await apiGetAdminLog()
+      setAdminLogs(logs)
+    } finally {
+      setAdminLogsLoading(false)
+    }
+  }, [])
+
+  // Moderation Action: Approve Bounty
+  const handleApproveBounty = async (bountyId: number | string) => {
+    try {
+      await apiApproveBounty(bountyId)
+      toast.success(`Bounty #${bountyId} approved and visible across platform`)
+      void fetchPending()
       void fetchStats()
       void fetchBounties()
-      void fetchSubmissions()
-    } else if (activeTab === 'bounties') {
-      void fetchBounties()
-    } else if (activeTab === 'submissions') {
-      void fetchSubmissions()
-    } else if (activeTab === 'activity') {
-      void fetchActivity()
+    } catch (err) {
+      toast.error('Approval failed: ' + (err as Error).message)
     }
   }
 
-  // Calculate formatted total rewards
+  // Moderation Action: Reject Bounty
+  const handleRejectBounty = async () => {
+    if (!rejectModal) return
+    if (!rejectNote.trim()) {
+      toast.error('Rejection note is required')
+      return
+    }
+    setRejecting(true)
+    try {
+      await apiRejectBounty(rejectModal.bountyId, rejectNote.trim())
+      toast.success(`Bounty #${rejectModal.bountyId} marked as rejected`)
+      setRejectModal(null)
+      setRejectNote('')
+      void fetchPending()
+      void fetchStats()
+      void fetchBounties()
+    } catch (err) {
+      toast.error('Rejection failed: ' + (err as Error).message)
+    } finally {
+      setRejecting(false)
+    }
+  }
+
+  // Trigger data fetching on auth or tab change
+  useEffect(() => {
+    if (!isAuthenticated) return
+    // Always fetch pending count for tab badge
+    void fetchPending()
+
+    if (activeTab === 'overview') {
+      void fetchStats()
+      void fetchBounties()
+      void fetchSubmissions()
+    } else if (activeTab === 'moderation') {
+      void fetchPending()
+    } else if (activeTab === 'revenue') {
+      void fetchRevenue()
+    } else if (activeTab === 'bounties') {
+      void fetchBounties()
+    } else if (activeTab === 'submissions') {
+      void fetchSubmissions()
+    } else if (activeTab === 'activity') {
+      void fetchActivity()
+    } else if (activeTab === 'audit_log') {
+      void fetchAdminLog()
+    }
+  }, [
+    isAuthenticated,
+    activeTab,
+    fetchStats,
+    fetchBounties,
+    fetchSubmissions,
+    fetchActivity,
+    fetchPending,
+    fetchRevenue,
+    fetchAdminLog,
+  ])
+
+  // Refresh current view
+  const handleRefresh = () => {
+    void fetchPending()
+    if (activeTab === 'overview') {
+      void fetchStats()
+      void fetchBounties()
+      void fetchSubmissions()
+    } else if (activeTab === 'moderation') {
+      void fetchPending()
+    } else if (activeTab === 'revenue') {
+      void fetchRevenue()
+    } else if (activeTab === 'bounties') {
+      void fetchBounties()
+    } else if (activeTab === 'submissions') {
+      void fetchSubmissions()
+    } else if (activeTab === 'activity') {
+      void fetchActivity()
+    } else if (activeTab === 'audit_log') {
+      void fetchAdminLog()
+    }
+  }
+
+  // Calculate formatted total rewards with robust 6-decimal USDC scaling
   const formattedTotalVolume = useMemo(() => {
-    if (!stats?.bounties.totalRewards) return '0.00'
-    const val = Number(stats.bounties.totalRewards)
-    return isNaN(val) ? '0.00' : val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    return formatUsdcAmount(stats?.bounties.totalFunded ?? stats?.bounties.totalRewards)
   }, [stats])
 
   // ---------------------------------------------------------------------------
@@ -249,9 +390,9 @@ export function Admin() {
             <Lock size={24} />
           </div>
 
-          <h1 className="font-display font-bold text-2xl tracking-tight mb-2">Admin Console Access</h1>
+          <h1 className="font-display font-bold text-2xl tracking-tight mb-2">TaskFi Admin Console</h1>
           <p className="text-gray-600 text-sm mb-6 leading-relaxed">
-            This administrative dashboard provides platform-wide visibility across all bounties, submissions, and audit activities.
+            This administrative dashboard provides platform-wide visibility across all tasks, submissions, moderation, and audit activities.
           </p>
 
           {isGoogleWhitelisted ? (
@@ -267,6 +408,8 @@ export function Admin() {
                 onClick={() => {
                   setIsAuthenticated(true)
                   setAuthMethod('google')
+                  sessionStorage.setItem('taskfi_admin_authenticated', 'true')
+                  sessionStorage.setItem('taskfi_admin_auth_method', 'google')
                   sessionStorage.setItem('fixbounty_admin_authenticated', 'true')
                   sessionStorage.setItem('fixbounty_admin_auth_method', 'google')
                 }}
@@ -340,7 +483,7 @@ export function Admin() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="font-display font-black text-2xl tracking-tight">Admin Console</h1>
+                <h1 className="font-display font-black text-2xl tracking-tight">TaskFi Admin Console</h1>
                 <span className="bg-yellow-300 border border-black px-2 py-0.5 text-[10px] font-black uppercase tracking-wider">
                   Superuser
                 </span>
@@ -406,20 +549,32 @@ export function Admin() {
       </div>
 
       {/* Navigation Tabs */}
-      <div className="flex border-b-2 border-black bg-white">
+      <div className="flex border-b-2 border-black bg-white overflow-x-auto">
         {[
           { key: 'overview', label: 'Platform Overview', icon: Briefcase },
+          {
+            key: 'moderation',
+            label: `Moderation Queue${pendingBounties.length > 0 ? ` (${pendingBounties.length})` : ''}`,
+            icon: Clock,
+            highlight: pendingBounties.length > 0,
+          },
+          { key: 'revenue', label: 'Revenue & Treasury', icon: TrendingUp },
           { key: 'bounties', label: `All Bounties (${bountiesTotal || '…'})`, icon: DollarSign },
           { key: 'submissions', label: `All Submissions (${submissionsTotal || '…'})`, icon: FileCode },
-          { key: 'activity', label: `Live Audit Feed (${activityTotal || '…'})`, icon: ShieldAlert },
-        ].map(({ key, label, icon: Icon }) => {
+          { key: 'activity', label: `Live Activity (${activityTotal || '…'})`, icon: ShieldAlert },
+          { key: 'audit_log', label: 'Admin Audit Log', icon: FileText },
+        ].map(({ key, label, icon: Icon, highlight }) => {
           const isActive = activeTab === key
           return (
             <button
               key={key}
               onClick={() => setActiveTab(key as typeof activeTab)}
-              className={`flex items-center gap-2 px-5 py-3 text-xs sm:text-sm font-bold border-r-2 border-black transition-colors ${
-                isActive ? 'bg-yellow-300 text-black shadow-[inset_0_-3px_0_black]' : 'bg-white hover:bg-yellow-100 text-gray-700'
+              className={`flex items-center gap-2 px-4 py-3 text-xs sm:text-sm font-bold border-r-2 border-black whitespace-nowrap transition-colors shrink-0 ${
+                isActive
+                  ? 'bg-yellow-300 text-black shadow-[inset_0_-3px_0_black]'
+                  : highlight
+                  ? 'bg-amber-100 text-amber-900 hover:bg-yellow-200'
+                  : 'bg-white hover:bg-yellow-100 text-gray-700'
               }`}
             >
               <Icon size={16} />
@@ -533,7 +688,7 @@ export function Admin() {
                         </p>
                       </div>
                       <div className="text-right shrink-0">
-                        <span className="font-bold text-xs">{b.rewardAmount} USDC</span>
+                        <span className="font-bold text-xs">{formatUsdcAmount(b.rewardAmount)} USDC</span>
                         <div className="scale-90 origin-right">
                           <StatusBadge status={b.onchainStatus} />
                         </div>
@@ -595,6 +750,211 @@ export function Admin() {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* --------------------------------------------------------------------- */}
+      {/* TAB: MODERATION QUEUE */}
+      {/* --------------------------------------------------------------------- */}
+      {activeTab === 'moderation' && (
+        <div className="space-y-6">
+          <div className="border-2 border-black bg-white p-5 shadow-[4px_4px_0px_black] flex items-center justify-between">
+            <div>
+              <h2 className="font-display font-black text-lg">Bounty Review & Moderation Queue</h2>
+              <p className="text-xs text-gray-600 mt-1">
+                Review submitted bounties before platform-wide feature promotion. Onchain escrow is already locked.
+              </p>
+            </div>
+            <button
+              onClick={() => void fetchPending()}
+              disabled={pendingLoading}
+              className="border-2 border-black px-3 py-1.5 bg-yellow-300 hover:bg-black hover:text-white font-bold text-xs flex items-center gap-1.5 transition-colors shadow-[2px_2px_0px_black]"
+            >
+              <RefreshCw size={13} className={pendingLoading ? 'animate-spin' : ''} />
+              <span>Refresh</span>
+            </button>
+          </div>
+
+          {pendingLoading ? (
+            <div className="border-2 border-black bg-white p-12 text-center">
+              <RefreshCw size={24} className="animate-spin mx-auto text-gray-400 mb-2" />
+              <p className="text-sm font-bold">Loading review queue…</p>
+            </div>
+          ) : pendingBounties.length === 0 ? (
+            <div className="border-2 border-black bg-white p-12 text-center shadow-[4px_4px_0px_black] space-y-2">
+              <CheckCircle size={36} className="mx-auto text-green-600 mb-2" />
+              <p className="font-display font-black text-lg">All caught up!</p>
+              <p className="text-xs text-gray-500">There are no bounties pending moderation review.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {pendingBounties.map((b) => (
+                <div
+                  key={b.bounty_id || b.onchainId}
+                  className="border-2 border-black bg-white p-5 shadow-[4px_4px_0px_black] flex flex-col md:flex-row md:items-center justify-between gap-4"
+                >
+                  <div className="space-y-2 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono font-bold bg-black text-yellow-300 px-2 py-0.5 text-xs">
+                        Bounty #{b.bounty_id || b.onchainId}
+                      </span>
+                      <span className="font-display font-black text-base">{b.title}</span>
+                      {b.category_name && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold bg-yellow-200 border border-black uppercase">
+                          <Tag size={11} />
+                          {b.category_name}
+                        </span>
+                      )}
+                      <span className="font-bold text-green-700 bg-green-50 border border-green-600 px-2 py-0.5 text-xs">
+                        ${formatUsdcAmount(b.rewardAmount)} USDC
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-gray-700 line-clamp-2">{b.description}</p>
+
+                    <div className="flex items-center gap-4 text-[11px] text-gray-500 font-mono">
+                      <span>Creator: {formatAddress(b.creatorWallet)}</span>
+                      <span>Submitted: {new Date(b.created_at).toLocaleString()}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Link
+                      to={`/bounty/${b.bounty_id || b.onchainId}`}
+                      target="_blank"
+                      className="border-2 border-black px-3 py-1.5 text-xs font-bold bg-white hover:bg-gray-100 flex items-center gap-1 shadow-[2px_2px_0px_black]"
+                    >
+                      <Eye size={13} /> View
+                    </Link>
+                    <button
+                      onClick={() => void handleApproveBounty(b.bounty_id || b.onchainId)}
+                      className="border-2 border-black px-3 py-1.5 text-xs font-bold bg-green-400 hover:bg-green-500 flex items-center gap-1 shadow-[2px_2px_0px_black]"
+                    >
+                      <CheckCircle size={13} /> Approve
+                    </button>
+                    <button
+                      onClick={() => setRejectModal({ bountyId: b.bounty_id || b.onchainId, title: b.title })}
+                      className="border-2 border-black px-3 py-1.5 text-xs font-bold bg-red-400 hover:bg-red-500 text-white flex items-center gap-1 shadow-[2px_2px_0px_black]"
+                    >
+                      <XCircle size={13} /> Reject
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* --------------------------------------------------------------------- */}
+      {/* TAB: REVENUE & TREASURY */}
+      {/* --------------------------------------------------------------------- */}
+      {activeTab === 'revenue' && (
+        <div className="space-y-6">
+          {/* Revenue KPI Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="border-2 border-black bg-white p-5 shadow-[4px_4px_0px_black]">
+              <span className="text-xs font-bold uppercase tracking-wider text-gray-500">Total Escrow Deposited</span>
+              <div className="font-display font-black text-3xl mt-1 tabular-nums">
+                ${formattedTotalVolume} <span className="text-xs text-gray-500">USDC</span>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">Across all created onchain bounties</p>
+            </div>
+
+            <div className="border-2 border-black bg-white p-5 shadow-[4px_4px_0px_black]">
+              <span className="text-xs font-bold uppercase tracking-wider text-gray-500">Developer Payouts Settled</span>
+              <div className="font-display font-black text-3xl mt-1 text-green-700 tabular-nums">
+                ${formatUsdcAmount(stats?.bounties.totalClaimed ?? '0.00')} <span className="text-xs text-gray-500">USDC</span>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">100% direct developer claims</p>
+            </div>
+
+            <div className="border-2 border-black bg-white p-5 shadow-[4px_4px_0px_black]">
+              <span className="text-xs font-bold uppercase tracking-wider text-gray-500">Active Locked Escrow</span>
+              <div className="font-display font-black text-3xl mt-1 text-blue-700 tabular-nums">
+                ${formatUsdcAmount(stats?.bounties.totalActiveEscrow ?? stats?.bounties.totalFunded)} <span className="text-xs text-gray-500">USDC</span>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">Held in non-custodial smart contract</p>
+            </div>
+
+            <div className="border-2 border-black bg-white p-5 shadow-[4px_4px_0px_black]">
+              <span className="text-xs font-bold uppercase tracking-wider text-gray-500">Collected Platform Fees</span>
+              <div className="font-display font-black text-3xl mt-1 text-gray-700 tabular-nums">
+                $0.00 <span className="text-xs text-gray-500">USDC</span>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">BountyBoard V1: 0% protocol fee</p>
+            </div>
+          </div>
+
+          {/* Architecture Audit Notice */}
+          <div className="border-2 border-black bg-yellow-50 p-5 shadow-[4px_4px_0px_black] space-y-2">
+            <div className="flex items-center gap-2 font-display font-bold text-sm">
+              <ShieldCheck size={18} className="text-black" />
+              <span>Smart Contract Capability Audit & Fee Transparency</span>
+            </div>
+            <div className="text-xs text-gray-800 space-y-1.5 leading-relaxed">
+              <p>
+                <strong>BountyBoard V1 (Active Escrow at {BOUNTY_BOARD_ADDRESS}):</strong> Pure peer-to-peer non-custodial escrow contract. 100% of deposited USDC is paid directly to the approved developer upon <code className="bg-white px-1 border border-black/30 font-mono">claimReward()</code>. The contract has no fee taking or treasury functions.
+              </p>
+              <p>
+                <strong>BountyBoard V2 (Source in <code className="bg-white px-1 border border-black/30 font-mono">contracts/BountyBoardV2.sol</code>):</strong> Supports configurable protocol fee snapshotting at funding time (1–1000 bps) sent directly to treasury upon claim.
+              </p>
+              <p className="text-[11px] text-gray-500 italic">
+                Platform rule: Onchain revenue is never faked or simulated. Historical fee events are logged only when genuine smart contract fee collection transactions occur.
+              </p>
+            </div>
+          </div>
+
+          {/* Fee Events Table */}
+          <div className="border-2 border-black bg-white shadow-[4px_4px_0px_black] overflow-hidden">
+            <div className="p-4 border-b-2 border-black bg-gray-50 flex items-center justify-between">
+              <h3 className="font-display font-bold text-sm">Platform Fee Event Ledger</h3>
+              <button
+                onClick={() => void fetchRevenue()}
+                disabled={revenueLoading}
+                className="border border-black px-2.5 py-1 text-xs font-bold bg-white hover:bg-yellow-300 transition-colors"
+              >
+                Refresh
+              </button>
+            </div>
+
+            {recentFees.length === 0 ? (
+              <div className="p-8 text-center text-xs text-gray-500">
+                No fee events recorded yet (Active V1 escrow contract uses 0% protocol fee model).
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-black text-white font-bold uppercase tracking-wider text-[11px]">
+                    <tr>
+                      <th className="p-3">ID</th>
+                      <th className="p-3">Bounty</th>
+                      <th className="p-3">Tx Hash</th>
+                      <th className="p-3">Contributor</th>
+                      <th className="p-3">Fee</th>
+                      <th className="p-3">Reward</th>
+                      <th className="p-3">Treasury</th>
+                      <th className="p-3">Time</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200 font-mono">
+                    {recentFees.map((fee) => (
+                      <tr key={fee.id} className="hover:bg-yellow-50">
+                        <td className="p-3">{fee.id}</td>
+                        <td className="p-3">#{fee.bounty_id}</td>
+                        <td className="p-3">{fee.tx_hash ? fee.tx_hash.slice(0, 8) + '…' : '—'}</td>
+                        <td className="p-3">{formatAddress(fee.contributor_addr)}</td>
+                        <td className="p-3 font-bold text-green-700">${formatUsdcAmount(fee.fee_amount)} USDC</td>
+                        <td className="p-3">${formatUsdcAmount(fee.reward_amount)} USDC</td>
+                        <td className="p-3">{formatAddress(fee.treasury_addr)}</td>
+                        <td className="p-3 text-gray-500">{new Date(fee.recorded_at).toLocaleDateString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -681,15 +1041,29 @@ export function Admin() {
                             {b.title}
                           </Link>
                         </div>
-                        {b.tags && b.tags.length > 0 && (
-                          <div className="flex gap-1 mt-1 flex-wrap">
-                            {b.tags.slice(0, 2).map((t) => (
-                              <span key={t} className="text-[10px] bg-gray-100 px-1 border border-black/10">
-                                {t}
-                              </span>
-                            ))}
-                          </div>
-                        )}
+                        <div className="flex items-center gap-1 mt-1 flex-wrap">
+                          {b.categorySlug && (
+                            <span className="text-[10px] font-bold bg-yellow-200 border border-black px-1.5 py-0.2 uppercase">
+                              {b.categorySlug}
+                            </span>
+                          )}
+                          {b.moderationStatus && (
+                            <span className={`text-[10px] font-bold px-1.5 py-0.2 border uppercase ${
+                              b.moderationStatus === 'approved'
+                                ? 'bg-green-100 text-green-800 border-green-600'
+                                : b.moderationStatus === 'rejected'
+                                ? 'bg-red-100 text-red-800 border-red-600'
+                                : 'bg-yellow-100 text-yellow-800 border-yellow-600'
+                            }`}>
+                              {b.moderationStatus}
+                            </span>
+                          )}
+                          {b.tags && b.tags.slice(0, 2).map((t) => (
+                            <span key={t} className="text-[10px] bg-gray-100 px-1 border border-black/10">
+                              {t}
+                            </span>
+                          ))}
+                        </div>
                       </td>
 
                       {/* Creator */}
@@ -715,7 +1089,7 @@ export function Admin() {
 
                       {/* Reward */}
                       <td className="p-3 font-bold border-r border-black/10 tabular-nums">
-                        {b.rewardAmount} <span className="text-[10px] text-gray-500 font-normal">USDC</span>
+                        {formatUsdcAmount(b.rewardAmount)} <span className="text-[10px] text-gray-500 font-normal">USDC</span>
                       </td>
 
                       {/* Deadline */}
@@ -875,7 +1249,14 @@ export function Admin() {
                         >
                           {s.bountyTitle}
                         </Link>
-                        <span className="text-[10px] text-gray-500">Reward: {s.bountyReward} USDC</span>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          {s.seqNumber != null && (
+                            <span className="font-mono bg-black text-white px-1 py-0.2 text-[10px] font-bold">
+                              #{s.seqNumber}
+                            </span>
+                          )}
+                          <span className="text-[10px] text-gray-500">Reward: {formatUsdcAmount(s.bountyReward)} USDC</span>
+                        </div>
                       </td>
 
                       {/* PR Link */}
@@ -1050,6 +1431,139 @@ export function Admin() {
                 setActivityPage(1)
               }}
             />
+          </div>
+        </div>
+      )}
+
+      {/* --------------------------------------------------------------------- */}
+      {/* TAB: ADMIN AUDIT LOG */}
+      {/* --------------------------------------------------------------------- */}
+      {activeTab === 'audit_log' && (
+        <div className="space-y-6">
+          <div className="border-2 border-black bg-white p-5 shadow-[4px_4px_0px_black] flex items-center justify-between">
+            <div>
+              <h2 className="font-display font-black text-lg">Admin Operation Audit Trail</h2>
+              <p className="text-xs text-gray-600 mt-1">
+                Cryptographic immutable log of administrative actions, moderation decisions, and policy overrides.
+              </p>
+            </div>
+            <button
+              onClick={() => void fetchAdminLog()}
+              disabled={adminLogsLoading}
+              className="border-2 border-black px-3 py-1.5 bg-yellow-300 hover:bg-black hover:text-white font-bold text-xs flex items-center gap-1.5 transition-colors shadow-[2px_2px_0px_black]"
+            >
+              <RefreshCw size={13} className={adminLogsLoading ? 'animate-spin' : ''} />
+              <span>Refresh</span>
+            </button>
+          </div>
+
+          <div className="border-2 border-black bg-white shadow-[4px_4px_0px_black] overflow-hidden">
+            {adminLogsLoading ? (
+              <div className="p-12 text-center">
+                <RefreshCw size={24} className="animate-spin mx-auto text-gray-400 mb-2" />
+                <p className="text-sm font-bold">Loading audit logs…</p>
+              </div>
+            ) : adminLogs.length === 0 ? (
+              <div className="p-8 text-center text-xs text-gray-500">
+                No administrative actions logged yet.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-black text-white font-bold uppercase tracking-wider text-[11px]">
+                    <tr>
+                      <th className="p-3">ID</th>
+                      <th className="p-3">Admin</th>
+                      <th className="p-3">Action</th>
+                      <th className="p-3">Target</th>
+                      <th className="p-3">Notes & Reason</th>
+                      <th className="p-3">Timestamp</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {adminLogs.map((log) => (
+                      <tr key={log.id} className="hover:bg-yellow-50">
+                        <td className="p-3 font-mono">{log.id}</td>
+                        <td className="p-3">
+                          <span className="font-bold text-gray-900">{log.display_name || log.email || log.admin_uid}</span>
+                        </td>
+                        <td className="p-3">
+                          <span className={`px-2 py-0.5 text-[11px] font-bold uppercase border ${
+                            log.action.includes('approve')
+                              ? 'bg-green-100 text-green-800 border-green-600'
+                              : 'bg-red-100 text-red-800 border-red-600'
+                          }`}>
+                            {log.action}
+                          </span>
+                        </td>
+                        <td className="p-3 font-mono font-bold">
+                          {log.target_type} #{log.target_id}
+                        </td>
+                        <td className="p-3 text-gray-700">
+                          {log.notes || '—'}
+                        </td>
+                        <td className="p-3 font-mono text-gray-500">
+                          {new Date(log.created_at).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Rejection Note Modal */}
+      {rejectModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white border-2 border-black max-w-md w-full p-6 shadow-[8px_8px_0px_black] space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b-2 border-black pb-3">
+              <h3 className="font-display font-black text-lg">Reject Bounty #{rejectModal.bountyId}</h3>
+              <button
+                onClick={() => { setRejectModal(null); setRejectNote('') }}
+                className="border-2 border-black p-1 hover:bg-yellow-300 font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-gray-600">
+              Provide a clear reason for rejecting <strong>{rejectModal.title}</strong>. This note will be recorded and shown to the creator.
+            </p>
+
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1">
+                Rejection Note / Reason <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                rows={3}
+                value={rejectNote}
+                onChange={(e) => setRejectNote(e.target.value)}
+                placeholder="e.g. Scope unclear, spam submission, duplicate issue…"
+                className="w-full border-2 border-black p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-yellow-300"
+                autoFocus
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t-2 border-black/10">
+              <button
+                type="button"
+                onClick={() => { setRejectModal(null); setRejectNote('') }}
+                className="border-2 border-black px-3.5 py-1.5 text-xs font-bold hover:bg-gray-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleRejectBounty()}
+                disabled={rejecting || !rejectNote.trim()}
+                className="border-2 border-black bg-red-600 text-white hover:bg-red-700 px-4 py-1.5 text-xs font-bold disabled:opacity-50 shadow-[2px_2px_0px_black]"
+              >
+                {rejecting ? 'Rejecting…' : 'Confirm Rejection'}
+              </button>
+            </div>
           </div>
         </div>
       )}

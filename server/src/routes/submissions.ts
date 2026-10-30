@@ -8,7 +8,9 @@ export const submissionsRouter = Router({ mergeParams: true })
 // POST /api/bounties/:id/submissions - Submit work for a bounty
 const CreateSubmissionSchema = z.object({
   submitterWallet: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+  title: z.string().max(255).optional(),
   description: z.string().min(10, 'Description must be at least 10 characters'),
+  solutionDetails: z.string().optional(),
   pullRequestUrl: z.string().url('Must be a valid URL (GitHub PR or demo)'),
   attachments: z.array(z.string()).default([]),
   txHash: z.string().optional(),
@@ -26,7 +28,7 @@ submissionsRouter.post('/:id/submissions', requireAuth, async (req: Request, res
     return
   }
 
-  const { submitterWallet, description, pullRequestUrl, attachments, txHash } = parsed.data
+  const { submitterWallet, title, description, solutionDetails, pullRequestUrl, attachments, txHash } = parsed.data
   const normalizedWallet = submitterWallet.toLowerCase()
 
   // Find bounty
@@ -61,6 +63,13 @@ submissionsRouter.post('/:id/submissions', requireAuth, async (req: Request, res
   }
 
   const savedSubmission = await withTransaction(async (client) => {
+    // 1. Calculate sequential sequence number
+    const seqRes = await client.query<{ next_seq: number }>(
+      'SELECT COALESCE(MAX(seq_number), 0) + 1 AS next_seq FROM submissions WHERE bounty_id = $1',
+      [bounty.id]
+    )
+    const nextSeq = seqRes.rows[0]?.next_seq || 1
+
     const result = await client.query(
       `
       INSERT INTO submissions (
@@ -68,16 +77,21 @@ submissionsRouter.post('/:id/submissions', requireAuth, async (req: Request, res
         onchain_bounty_id,
         submitter_user_id,
         submitter_wallet,
+        title,
         description,
+        solution_details,
         pull_request_url,
         attachments,
         status,
+        seq_number,
         tx_hash,
         updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10, $11, NOW())
       ON CONFLICT (bounty_id, submitter_wallet) DO UPDATE SET
+        title = COALESCE(EXCLUDED.title, submissions.title),
         description = EXCLUDED.description,
+        solution_details = COALESCE(EXCLUDED.solution_details, submissions.solution_details),
         pull_request_url = EXCLUDED.pull_request_url,
         attachments = EXCLUDED.attachments,
         tx_hash = COALESCE(EXCLUDED.tx_hash, submissions.tx_hash),
@@ -88,10 +102,13 @@ submissionsRouter.post('/:id/submissions', requireAuth, async (req: Request, res
         onchain_bounty_id AS "onchainId",
         submitter_user_id AS "submitterUserId",
         submitter_wallet AS "submitterWallet",
+        title,
         description,
+        solution_details AS "solutionDetails",
         pull_request_url AS "pullRequestUrl",
         attachments,
         status,
+        seq_number AS "seqNumber",
         tx_hash AS "txHash",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -101,9 +118,12 @@ submissionsRouter.post('/:id/submissions', requireAuth, async (req: Request, res
         bounty.onchain_id || 0,
         user.id,
         normalizedWallet,
+        title || null,
         description,
+        solutionDetails || null,
         pullRequestUrl,
         attachments,
+        nextSeq,
         txHash || null,
       ]
     )
@@ -181,10 +201,13 @@ submissionsRouter.get('/:id/submissions', optionalAuth, async (req: Request, res
       s.onchain_bounty_id AS "onchainId",
       s.submitter_user_id AS "submitterUserId",
       s.submitter_wallet AS "submitterWallet",
+      s.title,
       s.description,
+      s.solution_details AS "solutionDetails",
       s.pull_request_url AS "pullRequestUrl",
       s.attachments,
       s.status,
+      s.seq_number AS "seqNumber",
       s.tx_hash AS "txHash",
       s.created_at AS "createdAt",
       s.updated_at AS "updatedAt",
@@ -193,7 +216,7 @@ submissionsRouter.get('/:id/submissions', optionalAuth, async (req: Request, res
     FROM submissions s
     LEFT JOIN users u ON s.submitter_user_id = u.id
     WHERE s.bounty_id = $1
-    ORDER BY s.created_at DESC
+    ORDER BY s.seq_number ASC, s.created_at ASC
     `,
     [bounty.id]
   )
@@ -222,7 +245,9 @@ contributorSubmissionsRouter.get('/:identifier', async (req: Request, res: Respo
       s.onchain_bounty_id AS "onchainId",
       s.submitter_user_id AS "submitterUserId",
       s.submitter_wallet AS "submitterWallet",
+      s.title,
       s.description,
+      s.solution_details AS "solutionDetails",
       s.pull_request_url AS "pullRequestUrl",
       s.attachments,
       s.status,

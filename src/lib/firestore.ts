@@ -31,6 +31,8 @@ export interface UserProfile {
   walletAddress?: string
   bio?: string
   github?: string
+  twitter?: string
+  website?: string
   createdAt?: DocumentData
   updatedAt?: DocumentData
 }
@@ -65,14 +67,25 @@ export interface BountyMeta {
   creatorAddress?: string
   description: string        // Full markdown description
   acceptanceCriteria: string // What counts as valid work
+  objectives?: string
+  requirements?: string
+  rules?: string
+  eligibility?: string
+  deliverables?: string
+  submissionInstructions?: string
   tags: string[]
   links?: string[]
+  categorySlug?: string
+  imageUrl?: string
+  moderationStatus?: 'pending' | 'approved' | 'rejected'
+  moderationNote?: string
   createdAt?: DocumentData
   updatedAt?: DocumentData
 }
 
 // Local cache keys to guarantee zero data loss if network/Firestore is slow or failing
-const LOCAL_META_PREFIX = 'fixbounty_meta_'
+const LOCAL_META_PREFIX = 'taskfi_meta_'
+const LEGACY_META_PREFIX = 'fixbounty_meta_'
 
 export function cacheLocalBountyMeta(bountyId: number, data: BountyMeta): void {
   try {
@@ -84,7 +97,9 @@ export function cacheLocalBountyMeta(bountyId: number, data: BountyMeta): void {
 
 export function getLocalBountyMeta(bountyId: number): BountyMeta | null {
   try {
-    const raw = localStorage.getItem(`${LOCAL_META_PREFIX}${bountyId}`)
+    const raw =
+      localStorage.getItem(`${LOCAL_META_PREFIX}${bountyId}`) ||
+      localStorage.getItem(`${LEGACY_META_PREFIX}${bountyId}`)
     return raw ? (JSON.parse(raw) as BountyMeta) : null
   } catch {
     return null
@@ -195,8 +210,11 @@ export interface SubmissionMeta {
   contributorUid: string
   contributorAddress: string
   submissionHash: string      // Must match what's recorded onchain
+  title?: string
   description: string         // Work explanation
+  solutionDetails?: string
   links: string[]             // PR links, demo URLs, etc.
+  seqNumber?: number
   submittedAt?: DocumentData | string | Date
   status?: string
 }

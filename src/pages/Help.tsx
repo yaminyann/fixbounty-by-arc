@@ -6,7 +6,7 @@ export function Help() {
     <div className="max-w-2xl space-y-10">
       <div>
         <h1 className="font-display font-bold text-2xl tracking-tight mb-2">Help & Security Notes</h1>
-        <p className="text-sm text-gray-500">Everything you need to know about FixBounty and how it works onchain.</p>
+        <p className="text-sm text-gray-500">Everything you need to know about TaskFi and how it works onchain.</p>
       </div>
 
       {/* Network info */}
@@ -77,7 +77,7 @@ export function Help() {
             },
             {
               title: 'Firebase identity vs. wallet ownership',
-              body: 'Google sign-in proves app identity (Firebase UID). Wallet ownership is proven by the cryptographic wallet signature on each transaction. FixBounty never conflates the two.',
+              body: 'Google sign-in proves app identity (Firebase UID). Wallet ownership is proven by the cryptographic wallet signature on each transaction. TaskFi never conflates the two.',
             },
           ].map(({ title, body }) => (
             <div key={title} className="border-2 border-black bg-white p-4">

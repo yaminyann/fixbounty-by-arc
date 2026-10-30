@@ -2,22 +2,22 @@ import { useState, useEffect } from 'react'
 import { useAccount, useSignMessage } from 'wagmi'
 import { ConnectKitButton } from 'connectkit'
 import { toast } from 'sonner'
-import { Github, ExternalLink, ShieldCheck, CheckCircle2, User } from 'lucide-react'
+import { Github, ExternalLink, ShieldCheck, CheckCircle2, User, Twitter, Globe, Shield } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { getUserProfile, upsertUserProfile, type UserProfile } from '@/lib/firestore'
-import { apiGetMe, apiGetWalletChallenge, apiLinkWallet, type ApiWallet } from '@/lib/api'
+import { apiGetMe, apiGetWalletChallenge, apiLinkWallet, apiUpdateProfile, type ApiWallet } from '@/lib/api'
 import { formatAddress } from '@/lib/bountyTypes'
 import { explorerAddr } from '@/lib/contract'
 
 export function Profile() {
-  const { user, loading, signInWithGoogle } = useAuth()
+  const { user, loading, signInWithGoogle, isAdmin } = useAuth()
   const { address, isConnected } = useAccount()
   const { signMessageAsync } = useSignMessage()
 
-  const [profile, setProfile] = useState<Partial<UserProfile>>({})
+  const [profile, setProfile] = useState<Partial<UserProfile & { twitter?: string; website?: string }>>({})
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ bio: '', github: '' })
+  const [form, setForm] = useState({ bio: '', github: '', twitter: '', website: '' })
 
   const [linkedWallets, setLinkedWallets] = useState<ApiWallet[]>([])
   const [linkingWallet, setLinkingWallet] = useState(false)
@@ -29,10 +29,30 @@ export function Profile() {
       if (meData?.wallets) {
         setLinkedWallets(meData.wallets)
       }
-      const p = await getUserProfile(user.uid)
-      if (p) {
-        setProfile(p)
-        setForm({ bio: p.bio ?? '', github: p.github ?? '' })
+      if (meData?.user) {
+        setForm({
+          bio: meData.user.bio ?? '',
+          github: meData.user.github ?? '',
+          twitter: meData.user.twitter ?? '',
+          website: meData.user.website ?? '',
+        })
+        setProfile({
+          bio: meData.user.bio,
+          github: meData.user.github,
+          twitter: meData.user.twitter,
+          website: meData.user.website,
+        })
+      } else {
+        const p = await getUserProfile(user.uid)
+        if (p) {
+          setProfile(p)
+          setForm({
+            bio: p.bio ?? '',
+            github: p.github ?? '',
+            twitter: (p as { twitter?: string }).twitter ?? '',
+            website: (p as { website?: string }).website ?? '',
+          })
+        }
       }
     } catch (err) {
       console.warn('[Profile] Failed to load data:', err)
@@ -72,10 +92,28 @@ export function Profile() {
     if (!user) return
     setSaving(true)
     try {
-      await upsertUserProfile(user.uid, { bio: form.bio, github: form.github })
-      setProfile((p) => ({ ...p, bio: form.bio, github: form.github }))
+      await apiUpdateProfile({
+        displayName: user.displayName || undefined,
+        bio: form.bio,
+        github: form.github,
+        twitter: form.twitter,
+        website: form.website,
+      })
+      await upsertUserProfile(user.uid, {
+        bio: form.bio,
+        github: form.github,
+        twitter: form.twitter,
+        website: form.website,
+      })
+      setProfile((p) => ({
+        ...p,
+        bio: form.bio,
+        github: form.github,
+        twitter: form.twitter,
+        website: form.website,
+      }))
       setEditing(false)
-      toast.success('Profile saved.')
+      toast.success('Profile updated successfully.')
     } catch {
       toast.error('Failed to save profile.')
     } finally {
@@ -108,18 +146,26 @@ export function Profile() {
 
       {/* Identity card */}
       <div className="border-2 border-black bg-white p-6 shadow-[4px_4px_0px_black] space-y-4">
-        <div className="flex items-center gap-4">
-          {user.photoURL ? (
-            <img src={user.photoURL} alt="" className="w-14 h-14 border-2 border-black" />
-          ) : (
-            <div className="w-14 h-14 border-2 border-black bg-yellow-300 flex items-center justify-center font-bold text-xl">
-              {(user.displayName ?? user.email ?? '?')[0].toUpperCase()}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            {user.photoURL ? (
+              <img src={user.photoURL} alt="" className="w-14 h-14 border-2 border-black" />
+            ) : (
+              <div className="w-14 h-14 border-2 border-black bg-yellow-300 flex items-center justify-center font-bold text-xl">
+                {(user.displayName ?? user.email ?? '?')[0].toUpperCase()}
+              </div>
+            )}
+            <div>
+              <p className="font-bold text-base">{user.displayName ?? 'Anonymous'}</p>
+              <p className="text-sm text-gray-500">{user.email}</p>
             </div>
-          )}
-          <div>
-            <p className="font-bold text-base">{user.displayName ?? 'Anonymous'}</p>
-            <p className="text-sm text-gray-500">{user.email}</p>
           </div>
+          {isAdmin && (
+            <span className="inline-flex items-center gap-1.5 bg-yellow-300 border-2 border-black px-2.5 py-1 text-xs font-black shadow-[2px_2px_0px_black]">
+              <Shield size={14} />
+              ADMINISTRATOR
+            </span>
+          )}
         </div>
 
         <div>
@@ -216,20 +262,51 @@ export function Profile() {
                 placeholder="Tell contributors about yourself…"
               />
             </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-bold mb-1 flex items-center gap-1.5">
+                  <Github size={14} />
+                  <span>GitHub username</span>
+                </label>
+                <input
+                  type="text"
+                  value={form.github}
+                  onChange={(e) => setForm({ ...form, github: e.target.value })}
+                  className="w-full border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-300"
+                  placeholder="octocat"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold mb-1 flex items-center gap-1.5">
+                  <Twitter size={14} />
+                  <span>Twitter / X handle</span>
+                </label>
+                <input
+                  type="text"
+                  value={form.twitter}
+                  onChange={(e) => setForm({ ...form, twitter: e.target.value })}
+                  className="w-full border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-300"
+                  placeholder="dev_user"
+                />
+              </div>
+            </div>
             <div>
-              <label className="block text-sm font-bold mb-1">GitHub username</label>
+              <label className="block text-sm font-bold mb-1 flex items-center gap-1.5">
+                <Globe size={14} />
+                <span>Website / Portfolio URL</span>
+              </label>
               <input
-                type="text"
-                value={form.github}
-                onChange={(e) => setForm({ ...form, github: e.target.value })}
+                type="url"
+                value={form.website}
+                onChange={(e) => setForm({ ...form, website: e.target.value })}
                 className="w-full border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-300"
-                placeholder="octocat"
+                placeholder="https://example.com"
               />
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 pt-1">
               <button onClick={() => void handleSave()} disabled={saving}
-                className="border-2 border-black bg-black text-white px-4 py-2 text-sm font-bold hover:bg-yellow-300 hover:text-black transition-all disabled:opacity-60">
-                {saving ? 'Saving…' : 'Save'}
+                className="border-2 border-black bg-black text-white px-4 py-2 text-sm font-bold hover:bg-yellow-300 hover:text-black transition-all disabled:opacity-60 shadow-[2px_2px_0px_#EAB308]">
+                {saving ? 'Saving…' : 'Save Profile'}
               </button>
               <button onClick={() => setEditing(false)} className="border-2 border-black px-4 py-2 text-sm font-medium hover:bg-yellow-300 transition-colors">
                 Cancel
@@ -239,17 +316,33 @@ export function Profile() {
         ) : (
           <div className="space-y-3">
             {profile.bio ? (
-              <p className="text-sm text-gray-700">{profile.bio}</p>
+              <p className="text-sm text-gray-700 whitespace-pre-wrap">{profile.bio}</p>
             ) : (
-              <p className="text-sm text-gray-400 italic">No bio yet.</p>
+              <p className="text-sm text-gray-400 italic">No bio added yet.</p>
             )}
-            {profile.github && (
-              <a href={`https://github.com/${profile.github}`} target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 text-sm hover:underline">
-                <Github size={15} />
-                {profile.github}
-              </a>
-            )}
+            <div className="flex flex-wrap items-center gap-4 pt-2 border-t border-gray-100">
+              {profile.github && (
+                <a href={`https://github.com/${profile.github}`} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-gray-800 hover:text-black underline">
+                  <Github size={14} />
+                  github.com/{profile.github}
+                </a>
+              )}
+              {profile.twitter && (
+                <a href={`https://x.com/${profile.twitter}`} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-gray-800 hover:text-black underline">
+                  <Twitter size={14} />
+                  @{profile.twitter}
+                </a>
+              )}
+              {profile.website && (
+                <a href={profile.website.startsWith('http') ? profile.website : `https://${profile.website}`} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:underline">
+                  <Globe size={14} />
+                  {profile.website.replace(/^https?:\/\//, '')}
+                </a>
+              )}
+            </div>
           </div>
         )}
       </div>

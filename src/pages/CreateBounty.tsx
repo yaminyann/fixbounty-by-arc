@@ -3,7 +3,22 @@ import { useNavigate } from 'react-router-dom'
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSwitchChain } from 'wagmi'
 import { erc20Abi, parseEventLogs } from 'viem'
 import { toast } from 'sonner'
-import { Info, ExternalLink, AlertTriangle, RefreshCw, CheckCircle2 } from 'lucide-react'
+import {
+  Info,
+  ExternalLink,
+  AlertTriangle,
+  RefreshCw,
+  CheckCircle2,
+  Tag,
+  DollarSign,
+  Clock,
+  Layers,
+  FileText,
+  ShieldAlert,
+  Sparkles,
+  Eye,
+  Check,
+} from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   BOUNTY_BOARD_ADDRESS,
@@ -16,11 +31,25 @@ import {
 import { parseAmount } from '@/onchain-money'
 import { parseOnchainError } from '@/lib/bountyTypes'
 import { saveBountyMeta, logActivity } from '@/lib/firestore'
-import { apiSaveBounty } from '@/lib/api'
+import { apiSaveBounty, apiGetCategories, type ApiCategory } from '@/lib/api'
+import { ImageUpload } from '@/components/ui/ImageUpload'
 import { NetworkGuard } from '@/components/ui/NetworkGuard'
 import { ConnectKitButton } from 'connectkit'
 
 type Step = 'create' | 'approve' | 'fund' | 'done'
+
+const DEFAULT_CATEGORIES: ApiCategory[] = [
+  { id: 1, slug: 'bug-fix', name: 'Bug Fix', description: 'Resolve bugs and unexpected issues', color: '#EF4444' },
+  { id: 2, slug: 'feature', name: 'Feature Request', description: 'Add new capabilities or endpoints', color: '#3B82F6' },
+  { id: 3, slug: 'documentation', name: 'Documentation', description: 'Improve guides, README, or API docs', color: '#10B981' },
+  { id: 4, slug: 'security', name: 'Security Audit & Fix', description: 'Vulnerability patching and security hardening', color: '#F59E0B' },
+  { id: 5, slug: 'performance', name: 'Performance Optimization', description: 'Speed up queries, rendering, or gas', color: '#8B5CF6' },
+  { id: 6, slug: 'testing', name: 'Test Suite & Coverage', description: 'Unit, fuzz, or invariant tests', color: '#06B6D4' },
+  { id: 7, slug: 'design', name: 'Design & UI/UX', description: 'Interface refinement and visual design', color: '#EC4899' },
+  { id: 8, slug: 'other', name: 'Other', description: 'General open-source contribution', color: '#6B7280' },
+]
+
+const POPULAR_TAGS = ['typescript', 'react', 'solidity', 'security', 'bug', 'smart-contract', 'backend', 'api', 'ui']
 
 export function CreateBounty() {
   const navigate = useNavigate()
@@ -28,17 +57,39 @@ export function CreateBounty() {
   const { address, isConnected, chainId } = useAccount()
   const { switchChain } = useSwitchChain()
 
+  const [categories, setCategories] = useState<ApiCategory[]>(DEFAULT_CATEGORIES)
   const [form, setForm] = useState({
     title: '',
+    categorySlug: 'bug-fix',
+    imageUrl: '',
+    tags: '',
+    // Detailed structured fields
     description: '',
+    objectives: '',
+    requirements: '',
+    deliverables: '',
+    rules: '',
+    eligibility: '',
+    submissionInstructions: '',
     acceptanceCriteria: '',
+    // Financials & Deadline
     rewardRaw: '',
     deadlineDays: '14',
-    tags: '',
   })
+
   const [step, setStep] = useState<Step>('create')
   const [pendingBountyId, setPendingBountyId] = useState<number | null>(null)
   const [metaSaveStatus, setMetaSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
+  const [showPreviewModal, setShowPreviewModal] = useState(false)
+
+  // Load backend categories on mount
+  useEffect(() => {
+    apiGetCategories()
+      .then((cats) => {
+        if (cats && cats.length > 0) setCategories(cats)
+      })
+      .catch(() => {})
+  }, [])
 
   // Step 1: createBounty
   const { writeContract: createWrite, data: createHash, isPending: createPending } = useWriteContract()
@@ -62,6 +113,16 @@ export function CreateBounty() {
 
   const deadlineTs = Math.floor(Date.now() / 1000) + Number(form.deadlineDays) * 86400
 
+  // Tag click helper
+  const handleToggleTag = (tag: string) => {
+    const existing = form.tags.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean)
+    if (existing.includes(tag)) {
+      setForm({ ...form, tags: existing.filter((t) => t !== tag).join(', ') })
+    } else {
+      setForm({ ...form, tags: [...existing, tag].join(', ') })
+    }
+  }
+
   // --- Step 1: Create onchain ---
   const handleCreate = () => {
     if (!user) {
@@ -77,15 +138,19 @@ export function CreateBounty() {
       return
     }
     if (!form.title.trim()) {
-      toast.error('Title is required.')
+      toast.error('Bounty title is required.')
       return
     }
     if (!form.description.trim()) {
       toast.error('Description is required.')
       return
     }
+    if (!form.acceptanceCriteria.trim()) {
+      toast.error('Acceptance criteria is required.')
+      return
+    }
     if (!parsedReward || parsedReward.raw <= 0n) {
-      toast.error('Enter a valid reward amount.')
+      toast.error('Enter a valid USDC reward amount.')
       return
     }
     if (Number(form.deadlineDays) < 1) {
@@ -96,24 +161,29 @@ export function CreateBounty() {
     // Generate contentHash of description
     const contentHash = `sha256:${btoa(unescape(encodeURIComponent(form.description))).slice(0, 32)}`
 
-    createWrite({
-      address: BOUNTY_BOARD_ADDRESS,
-      abi: BOUNTY_BOARD_ABI,
-      functionName: 'createBounty',
-      args: [form.title.trim(), contentHash, parsedReward.raw, BigInt(deadlineTs)],
-    }, {
-      onSuccess: () => {
-        toast.success('Bounty created onchain! Now approve USDC spending…')
-        setStep('approve')
+    createWrite(
+      {
+        address: BOUNTY_BOARD_ADDRESS,
+        abi: BOUNTY_BOARD_ABI,
+        functionName: 'createBounty',
+        args: [form.title.trim(), contentHash, parsedReward.raw, BigInt(deadlineTs)],
       },
-      onError: (err) => toast.error(parseOnchainError(err)),
-    })
+      {
+        onSuccess: () => {
+          toast.success('Bounty registered onchain! Now approve USDC spending…')
+          setStep('approve')
+        },
+        onError: (err) => toast.error(parseOnchainError(err)),
+      }
+    )
   }
 
-  // Helper to persist metadata with retry capability
+  // Persist metadata to PostgreSQL and Firestore
   const persistMetadata = async (id: number) => {
     setMetaSaveStatus('saving')
     try {
+      const tagsList = form.tags.split(',').map((t) => t.trim()).filter(Boolean)
+
       // 1. Persist directly to PostgreSQL backend
       await apiSaveBounty({
         onchainId: id,
@@ -121,20 +191,36 @@ export function CreateBounty() {
         title: form.title.trim(),
         description: form.description,
         acceptanceCriteria: form.acceptanceCriteria,
+        objectives: form.objectives.trim() || undefined,
+        requirements: form.requirements.trim() || undefined,
+        rules: form.rules.trim() || undefined,
+        eligibility: form.eligibility.trim() || undefined,
+        deliverables: form.deliverables.trim() || undefined,
+        submissionInstructions: form.submissionInstructions.trim() || undefined,
         rewardAmount: parsedReward ? parsedReward.raw.toString() : '0',
         deadline: new Date(deadlineTs * 1000).toISOString(),
-        tags: form.tags.split(',').map((t) => t.trim()).filter(Boolean),
+        tags: tagsList,
         links: [],
+        categorySlug: form.categorySlug,
+        imageUrl: form.imageUrl.trim() || undefined,
         txHash: createHash,
       }).catch((e) => console.warn('[CreateBounty] PostgreSQL save warning:', e))
 
-      // 2. Persist to Firestore and local cache as fallback
+      // 2. Persist to Firestore fallback
       await saveBountyMeta(id, {
         creatorUid: user?.uid ?? 'anonymous',
         creatorAddress: address?.toLowerCase(),
         description: form.description,
         acceptanceCriteria: form.acceptanceCriteria,
-        tags: form.tags.split(',').map((t) => t.trim()).filter(Boolean),
+        objectives: form.objectives.trim() || undefined,
+        requirements: form.requirements.trim() || undefined,
+        rules: form.rules.trim() || undefined,
+        eligibility: form.eligibility.trim() || undefined,
+        deliverables: form.deliverables.trim() || undefined,
+        submissionInstructions: form.submissionInstructions.trim() || undefined,
+        tags: tagsList,
+        categorySlug: form.categorySlug,
+        imageUrl: form.imageUrl.trim() || undefined,
       })
 
       if (address) {
@@ -143,7 +229,7 @@ export function CreateBounty() {
           type: 'created',
           actorAddress: address,
           txHash: createHash,
-          message: `Bounty #${id} "${form.title}" created`,
+          message: `Bounty #${id} "${form.title}" created with ${form.rewardRaw} USDC reward`,
         }).catch(() => {})
       }
       setMetaSaveStatus('saved')
@@ -153,7 +239,7 @@ export function CreateBounty() {
     }
   }
 
-  // Extract bountyId from create receipt once confirmed
+  // Extract bountyId from create receipt
   useEffect(() => {
     if (!createSuccess || !createReceipt || pendingBountyId !== null) return
 
@@ -168,7 +254,6 @@ export function CreateBounty() {
         id = Number(parsedLogs[0].args.bountyId)
       }
     } catch {
-      // Fallback topic decode
       const firstLog = createReceipt.logs?.[0]
       if (firstLog?.topics?.[1]) {
         id = Number(BigInt(firstLog.topics[1]))
@@ -185,15 +270,18 @@ export function CreateBounty() {
   // Step 2: Approve USDC
   const handleApprove = () => {
     if (!parsedReward) return
-    approveWrite({
-      address: USDC_ADDRESS,
-      abi: erc20Abi,
-      functionName: 'approve',
-      args: [BOUNTY_BOARD_ADDRESS, parsedReward.raw],
-    }, {
-      onSuccess: () => toast.success('USDC approved! Now fund the bounty…'),
-      onError: (err) => toast.error(parseOnchainError(err)),
-    })
+    approveWrite(
+      {
+        address: USDC_ADDRESS,
+        abi: erc20Abi,
+        functionName: 'approve',
+        args: [BOUNTY_BOARD_ADDRESS, parsedReward.raw],
+      },
+      {
+        onSuccess: () => toast.success('USDC approved! Now proceed to lock escrow…'),
+        onError: (err) => toast.error(parseOnchainError(err)),
+      }
+    )
   }
 
   useEffect(() => {
@@ -203,30 +291,33 @@ export function CreateBounty() {
   // Step 3: Fund bounty
   const handleFund = () => {
     if (pendingBountyId === null) {
-      toast.error('Bounty ID not confirmed yet. Please wait for transaction receipt.')
+      toast.error('Bounty ID not confirmed yet. Please wait for onchain receipt.')
       return
     }
-    fundWrite({
-      address: BOUNTY_BOARD_ADDRESS,
-      abi: BOUNTY_BOARD_ABI,
-      functionName: 'fundBounty',
-      args: [BigInt(pendingBountyId)],
-    }, {
-      onSuccess: (hash) => {
-        toast.success('Bounty funded! Redirecting…')
-        setStep('done')
-        if (address) {
-          void logActivity({
-            bountyId: pendingBountyId,
-            type: 'funded',
-            actorAddress: address,
-            txHash: hash,
-            message: `Bounty #${pendingBountyId} funded with ${form.rewardRaw} USDC`,
-          }).catch(() => {})
-        }
+    fundWrite(
+      {
+        address: BOUNTY_BOARD_ADDRESS,
+        abi: BOUNTY_BOARD_ABI,
+        functionName: 'fundBounty',
+        args: [BigInt(pendingBountyId)],
       },
-      onError: (err) => toast.error(parseOnchainError(err)),
-    })
+      {
+        onSuccess: (hash) => {
+          toast.success('Bounty funded! Directing to details…')
+          setStep('done')
+          if (address) {
+            void logActivity({
+              bountyId: pendingBountyId,
+              type: 'funded',
+              actorAddress: address,
+              txHash: hash,
+              message: `Bounty #${pendingBountyId} funded with ${form.rewardRaw} USDC`,
+            }).catch(() => {})
+          }
+        },
+        onError: (err) => toast.error(parseOnchainError(err)),
+      }
+    )
   }
 
   useEffect(() => {
@@ -239,29 +330,49 @@ export function CreateBounty() {
   }, [fundSuccess])
 
   const isWrongChain = isConnected && chainId !== TARGET_CHAIN_ID
+  const selectedCategoryObj = categories.find((c) => c.slug === form.categorySlug)
 
   return (
-    <div className="max-w-2xl space-y-6">
-      <div className="mb-6">
-        <h1 className="font-display font-bold text-2xl tracking-tight mb-1">Post a Bounty</h1>
-        <p className="text-sm text-gray-500">
-          Create an onchain bounty with USDC escrow. Contributors submit work and claim upon approval.
-        </p>
+    <div className="space-y-8">
+      {/* Page Header */}
+      <div className="border-b-2 border-black pb-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="inline-flex items-center px-2 py-0.5 text-xs font-black uppercase tracking-wider bg-yellow-300 border border-black shadow-[1px_1px_0px_black]">
+              Escrow Setup
+            </span>
+            <span className="text-xs text-gray-500 font-mono">Arc Testnet Smart Contracts</span>
+          </div>
+          <h1 className="font-display font-black text-3xl tracking-tight">Create & Fund Bounty</h1>
+          <p className="text-sm text-gray-600 mt-1">
+            Specify technical deliverables, define clear acceptance rules, and lock USDC reward directly into contract escrow.
+          </p>
+        </div>
+
+        {/* Action Button to Preview */}
+        <button
+          type="button"
+          onClick={() => setShowPreviewModal(!showPreviewModal)}
+          className="inline-flex items-center gap-1.5 px-4 py-2 border-2 border-black bg-white hover:bg-yellow-200 font-bold text-xs uppercase tracking-wider shadow-[2px_2px_0px_black] active:translate-x-0.5 active:translate-y-0.5 transition-all self-start md:self-auto"
+        >
+          <Eye size={14} />
+          {showPreviewModal ? 'Hide Card Preview' : 'Preview Card'}
+        </button>
       </div>
 
       {/* Auth & Wallet Requirement Gates */}
       {!user && (
-        <div className="border-2 border-black bg-yellow-50 p-6 shadow-[4px_4px_0px_black] space-y-3">
+        <div className="border-2 border-black bg-yellow-50 p-5 shadow-[4px_4px_0px_black] space-y-3">
           <div className="flex items-center gap-2 font-bold text-sm">
-            <Info size={18} className="text-yellow-600" />
-            <span>Sign in required</span>
+            <Info size={18} className="text-yellow-700" />
+            <span>Google Authentication Required</span>
           </div>
           <p className="text-sm text-gray-700">
-            You must sign in with Google before posting a bounty. This links your bounty metadata so you can manage submissions in your dashboard.
+            Sign in with Google to link your off-chain bounty details and review contributor submissions in your dashboard.
           </p>
           <button
             onClick={() => void signInWithGoogle()}
-            className="inline-flex items-center gap-2 border-2 border-black bg-black text-white px-4 py-2 font-bold text-sm hover:bg-yellow-300 hover:text-black transition-all shadow-[2px_2px_0px_black]"
+            className="inline-flex items-center gap-2 border-2 border-black bg-black text-white px-5 py-2.5 font-bold text-xs uppercase tracking-wider hover:bg-yellow-300 hover:text-black transition-all shadow-[2px_2px_0px_black]"
           >
             Sign In with Google
           </button>
@@ -269,13 +380,13 @@ export function CreateBounty() {
       )}
 
       {!isConnected && (
-        <div className="border-2 border-black bg-white p-6 shadow-[4px_4px_0px_black] space-y-3">
+        <div className="border-2 border-black bg-white p-5 shadow-[4px_4px_0px_black] space-y-3">
           <div className="flex items-center gap-2 font-bold text-sm">
             <Info size={18} className="text-blue-600" />
-            <span>Connect Wallet</span>
+            <span>Connect Web3 Wallet</span>
           </div>
           <p className="text-sm text-gray-600">
-            Connect your Arc Testnet wallet to sign transactions and fund bounty escrow.
+            Connect an Arc Testnet compatible wallet to deploy the bounty and fund escrow with testnet USDC.
           </p>
           <ConnectKitButton />
         </div>
@@ -283,233 +394,512 @@ export function CreateBounty() {
 
       {isWrongChain && (
         <div className="mb-4">
-          <NetworkGuard><span /></NetworkGuard>
+          <NetworkGuard>
+            <span />
+          </NetworkGuard>
         </div>
       )}
 
-      {/* Step indicator */}
-      <div className="flex items-center gap-3 border-2 border-black p-3 bg-white shadow-[2px_2px_0px_black]">
-        {(['create', 'approve', 'fund'] as const).map((s, i) => (
-          <div key={s} className="flex items-center gap-2">
-            <span
-              className={`w-6 h-6 flex items-center justify-center text-xs font-bold border-2 border-black ${
-                step === s
-                  ? 'bg-yellow-300'
-                  : (step === 'approve' && i === 0) || (step === 'fund' && i <= 1) || step === 'done'
+      {/* Step Indicator */}
+      <div className="grid grid-cols-3 gap-2 border-2 border-black p-2 bg-white shadow-[3px_3px_0px_black]">
+        {[
+          { key: 'create', num: 1, label: '1. Register Onchain' },
+          { key: 'approve', num: 2, label: '2. Approve USDC' },
+          { key: 'fund', num: 3, label: '3. Lock Escrow' },
+        ].map((s) => {
+          const isActive = step === s.key
+          const isDone =
+            (step === 'approve' && s.num === 1) ||
+            (step === 'fund' && s.num <= 2) ||
+            step === 'done'
+
+          return (
+            <div
+              key={s.key}
+              className={`p-2.5 text-center font-bold text-xs uppercase tracking-wider border-2 border-black transition-all ${
+                isActive
+                  ? 'bg-yellow-300 shadow-[2px_2px_0px_black]'
+                  : isDone
                   ? 'bg-black text-white'
-                  : 'bg-white'
+                  : 'bg-gray-100 text-gray-400 border-gray-300'
               }`}
             >
-              {i + 1}
-            </span>
-            <span className="text-xs font-medium capitalize hidden sm:block">
-              {s === 'approve' ? 'Approve USDC' : s === 'fund' ? 'Fund Escrow' : 'Create Onchain'}
-            </span>
-            {i < 2 && <span className="text-gray-300 mx-1">→</span>}
-          </div>
-        ))}
+              <div className="flex items-center justify-center gap-1.5">
+                {isDone && <Check size={14} className="text-yellow-400" />}
+                <span>{s.label}</span>
+              </div>
+            </div>
+          )
+        })}
       </div>
 
-      {/* Metadata Sync Alert if onchain created but firestore failed */}
-      {metaSaveStatus === 'failed' && pendingBountyId && (
-        <div className="border-2 border-red-500 bg-red-50 p-4 flex items-start justify-between gap-3 text-xs text-red-800">
-          <div>
-            <div className="flex items-center gap-1.5 font-bold mb-1">
-              <AlertTriangle size={14} className="text-red-600" />
-              <span>Metadata Sync Notice</span>
-            </div>
-            <p>
-              Your bounty was created onchain (ID #{pendingBountyId}), but saving off-chain description to Firestore encountered an issue.
-            </p>
-          </div>
-          <button
-            onClick={() => void persistMetadata(pendingBountyId)}
-            className="border-2 border-red-600 bg-white px-2.5 py-1 text-xs font-bold hover:bg-red-100 flex items-center gap-1 shrink-0"
-          >
-            <RefreshCw size={12} /> Retry Sync
-          </button>
-        </div>
-      )}
-
-      {metaSaveStatus === 'saved' && pendingBountyId && (
-        <div className="border-2 border-green-500 bg-green-50 p-3 flex items-center gap-2 text-xs text-green-800 font-bold">
-          <CheckCircle2 size={14} className="text-green-600" />
-          <span>Bounty #{pendingBountyId} metadata synchronized and linked to your account.</span>
-        </div>
-      )}
-
-      {/* STEP 1: CREATE */}
+      {/* Step 1: Form & Live Preview Grid */}
       {step === 'create' && (
-        <div className="space-y-5 bg-white border-2 border-black p-6 shadow-[4px_4px_0px_black]">
-          <div>
-            <label className="block text-sm font-bold mb-1.5">
-              Title <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              maxLength={120}
-              placeholder="Fix OAuth redirect flicker on page reload"
-              value={form.title}
-              onChange={(e) => setForm({ ...form, title: e.target.value })}
-              className="w-full border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-300"
-            />
-          </div>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          {/* Main Form (8 cols on desktop) */}
+          <div className="lg:col-span-8 space-y-6">
+            {/* Section 1: Basic Information & Visuals */}
+            <div className="border-2 border-black bg-white p-6 shadow-[4px_4px_0px_black] space-y-5">
+              <div className="flex items-center gap-2 border-b-2 border-black pb-3">
+                <Layers size={18} />
+                <h2 className="font-display font-bold text-lg">1. Basic Information & Visuals</h2>
+              </div>
 
-          <div>
-            <label className="block text-sm font-bold mb-1.5">
-              Description <span className="text-red-500">*</span>
-            </label>
-            <p className="text-xs text-gray-500 mb-1.5">
-              Detailed task description, steps to reproduce, or link to GitHub issue.
-            </p>
-            <textarea
-              rows={5}
-              placeholder="Describe the bug, repository, where it occurs, and relevant environment context…"
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-              className="w-full border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-300 resize-y"
-            />
-          </div>
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider mb-1.5">
+                  Bounty Title <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  maxLength={120}
+                  placeholder="e.g. Patch reentrancy edge case in settlement vault"
+                  value={form.title}
+                  onChange={(e) => setForm({ ...form, title: e.target.value })}
+                  className="w-full border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-300 font-medium"
+                />
+                <div className="flex justify-between text-[11px] text-gray-500 mt-1">
+                  <span>Concise summary of the task or bug</span>
+                  <span>{form.title.length}/120</span>
+                </div>
+              </div>
 
-          <div>
-            <label className="block text-sm font-bold mb-1.5">
-              Acceptance Criteria <span className="text-red-500">*</span>
-            </label>
-            <textarea
-              rows={3}
-              placeholder="What must be demonstrated for approval? (e.g. Unit test passes, pull request merged, no regressions)"
-              value={form.acceptanceCriteria}
-              onChange={(e) => setForm({ ...form, acceptanceCriteria: e.target.value })}
-              className="w-full border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-300 resize-y"
-            />
-          </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                    <Tag size={14} />
+                    <span>Category</span> <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={form.categorySlug}
+                    onChange={(e) => setForm({ ...form, categorySlug: e.target.value })}
+                    className="w-full border-2 border-black px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-yellow-300 font-medium cursor-pointer"
+                  >
+                    {categories.map((cat) => (
+                      <option key={cat.slug} value={cat.slug}>
+                        {cat.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    {selectedCategoryObj?.description || 'Select task category'}
+                  </p>
+                </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-bold mb-1.5">
-                Reward (USDC) <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="number"
-                min="0.01"
-                step="0.01"
-                placeholder="10.00"
-                value={form.rewardRaw}
-                onChange={(e) => setForm({ ...form, rewardRaw: e.target.value })}
-                className="w-full border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-300 tabular-nums"
-              />
-              {parsedReward && (
-                <p className="text-xs text-gray-500 mt-1">
-                  {parsedReward.toFixed(USDC_DECIMALS)} USDC (6 decimals)
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider mb-1.5">
+                    Tags (Comma-separated)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="typescript, react, audit"
+                    value={form.tags}
+                    onChange={(e) => setForm({ ...form, tags: e.target.value })}
+                    className="w-full border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-300 font-medium"
+                  />
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {POPULAR_TAGS.map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => handleToggleTag(tag)}
+                        className={`text-[10px] px-1.5 py-0.5 border border-black font-mono transition-colors ${
+                          form.tags.includes(tag) ? 'bg-yellow-300 font-bold' : 'bg-gray-100 hover:bg-gray-200'
+                        }`}
+                      >
+                        +{tag}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Cover Image Upload Component */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider mb-1.5">
+                  Bounty Cover Image (Optimized & Stored in Database)
+                </label>
+                <ImageUpload
+                  value={form.imageUrl}
+                  onChange={(url) => setForm({ ...form, imageUrl: url })}
+                  alt="Bounty Cover"
+                  aspectRatio="16/9"
+                  helpText="Upload a banner or architecture diagram (PNG, JPEG, WebP). It is automatically downsampled, compressed to WebP, and stored in PostgreSQL."
+                />
+              </div>
+            </div>
+
+            {/* Section 2: Task Scope & Objectives */}
+            <div className="border-2 border-black bg-white p-6 shadow-[4px_4px_0px_black] space-y-5">
+              <div className="flex items-center gap-2 border-b-2 border-black pb-3">
+                <FileText size={18} />
+                <h2 className="font-display font-bold text-lg">2. Task Scope & Objectives</h2>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider mb-1.5">
+                  Detailed Description <span className="text-red-500">*</span>
+                </label>
+                <p className="text-xs text-gray-500 mb-1.5">
+                  Explain the problem, repository, affected functions, or reproduction steps.
                 </p>
-              )}
+                <textarea
+                  rows={5}
+                  placeholder="Provide full context on what needs to be fixed or built…"
+                  value={form.description}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  className="w-full border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-300 resize-y font-mono"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider mb-1.5">
+                    Objectives
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Key milestones or target outcomes for this bounty…"
+                    value={form.objectives}
+                    onChange={(e) => setForm({ ...form, objectives: e.target.value })}
+                    className="w-full border-2 border-black px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-yellow-300 resize-y"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider mb-1.5">
+                    Technical Requirements
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Specific languages, frameworks, test suites or version requirements…"
+                    value={form.requirements}
+                    onChange={(e) => setForm({ ...form, requirements: e.target.value })}
+                    className="w-full border-2 border-black px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-yellow-300 resize-y"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider mb-1.5">
+                  Expected Deliverables
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. GitHub Pull Request with passing unit tests and documentation update"
+                  value={form.deliverables}
+                  onChange={(e) => setForm({ ...form, deliverables: e.target.value })}
+                  className="w-full border-2 border-black px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-yellow-300 resize-y"
+                />
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-bold mb-1.5">Deadline (days)</label>
-              <input
-                type="number"
-                min="1"
-                max="365"
-                value={form.deadlineDays}
-                onChange={(e) => setForm({ ...form, deadlineDays: e.target.value })}
-                className="w-full border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-300 tabular-nums"
-              />
-              {form.deadlineDays && (
-                <p className="text-xs text-gray-500 mt-1">
-                  Closes {new Date(Date.now() + Number(form.deadlineDays) * 86400000).toLocaleDateString()}
+
+            {/* Section 3: Rules & Contributor Instructions */}
+            <div className="border-2 border-black bg-white p-6 shadow-[4px_4px_0px_black] space-y-5">
+              <div className="flex items-center gap-2 border-b-2 border-black pb-3">
+                <ShieldAlert size={18} />
+                <h2 className="font-display font-bold text-lg">3. Rules & Submission Guidelines</h2>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider mb-1.5">
+                    Contribution Rules
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Code standards, branch naming, licensing, or IP assignment rules…"
+                    value={form.rules}
+                    onChange={(e) => setForm({ ...form, rules: e.target.value })}
+                    className="w-full border-2 border-black px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-yellow-300 resize-y"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider mb-1.5">
+                    Eligibility Criteria
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Any contributor prerequisites, experience level, or KYC requirements…"
+                    value={form.eligibility}
+                    onChange={(e) => setForm({ ...form, eligibility: e.target.value })}
+                    className="w-full border-2 border-black px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-yellow-300 resize-y"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider mb-1.5">
+                  Submission Instructions for Developers
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="What must developers include when submitting work? (e.g. PR URL, test coverage report, demo recording)"
+                  value={form.submissionInstructions}
+                  onChange={(e) => setForm({ ...form, submissionInstructions: e.target.value })}
+                  className="w-full border-2 border-black px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-yellow-300 resize-y"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider mb-1.5">
+                  Acceptance Criteria <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Explicit conditions for approving payout (e.g. all 12 tests pass on CI, creator code review approved)"
+                  value={form.acceptanceCriteria}
+                  onChange={(e) => setForm({ ...form, acceptanceCriteria: e.target.value })}
+                  className="w-full border-2 border-black px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-yellow-300 resize-y"
+                />
+              </div>
+            </div>
+
+            {/* Section 4: Reward Escrow & Timeline */}
+            <div className="border-2 border-black bg-white p-6 shadow-[4px_4px_0px_black] space-y-5">
+              <div className="flex items-center gap-2 border-b-2 border-black pb-3">
+                <DollarSign size={18} />
+                <h2 className="font-display font-bold text-lg">4. Reward Escrow & Timeline</h2>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider mb-1.5">
+                    USDC Reward Amount <span className="text-red-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <DollarSign size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      placeholder="10.00"
+                      value={form.rewardRaw}
+                      onChange={(e) => setForm({ ...form, rewardRaw: e.target.value })}
+                      className="w-full border-2 border-black pl-9 pr-3 py-2.5 text-sm font-bold tabular-nums focus:outline-none focus:ring-2 focus:ring-yellow-300"
+                    />
+                  </div>
+                  {parsedReward && (
+                    <div className="mt-1.5 p-2 bg-yellow-50 border border-black text-[11px] font-mono text-gray-700">
+                      <div>Formatted: <span className="font-bold">{form.rewardRaw} USDC</span></div>
+                      <div>Base Atomic Units: <span className="font-bold">{parsedReward.raw.toString()}</span> (6 decimals)</div>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider mb-1.5">
+                    Submission Deadline (Days) <span className="text-red-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <Clock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                    <input
+                      type="number"
+                      min="1"
+                      max="365"
+                      value={form.deadlineDays}
+                      onChange={(e) => setForm({ ...form, deadlineDays: e.target.value })}
+                      className="w-full border-2 border-black pl-9 pr-3 py-2.5 text-sm font-bold tabular-nums focus:outline-none focus:ring-2 focus:ring-yellow-300"
+                    />
+                  </div>
+                  {form.deadlineDays && (
+                    <div className="mt-1.5 p-2 bg-gray-50 border border-black text-[11px] text-gray-700">
+                      Closes on: <strong className="font-mono">{new Date(Date.now() + Number(form.deadlineDays) * 86400000).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}</strong>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Escrow Guarantee Callout */}
+              <div className="bg-yellow-50 border-2 border-black p-4 space-y-2 text-xs">
+                <div className="flex items-center gap-2 font-bold text-black">
+                  <ShieldAlert size={16} className="text-yellow-700" />
+                  <span>Non-Custodial Onchain Escrow Contract</span>
+                </div>
+                <p className="text-gray-700 leading-relaxed">
+                  Funds will be deposited into the verified BountyBoard smart contract (
+                  <code className="bg-white px-1 border border-black font-mono">{BOUNTY_BOARD_ADDRESS.slice(0, 10)}…</code>
+                  ). TaskFi V1 has zero platform fees. If no acceptable submission is approved before the deadline plus grace period, you can reclaim your full deposit.
                 </p>
+              </div>
+
+              {/* Submit Button */}
+              <button
+                type="button"
+                onClick={handleCreate}
+                disabled={createPending || createConfirming || !user || !isConnected}
+                className="w-full border-2 border-black bg-black text-white py-4 font-black text-sm uppercase tracking-wider hover:bg-yellow-300 hover:text-black transition-all disabled:opacity-50 shadow-[4px_4px_0px_#EAB308] active:translate-x-0.5 active:translate-y-0.5"
+              >
+                {createPending
+                  ? 'Confirm in Wallet…'
+                  : createConfirming
+                  ? 'Creating Onchain (Step 1/3)…'
+                  : `Deploy Bounty & Proceed to Escrow`}
+              </button>
+            </div>
+          </div>
+
+          {/* Side Sticky Live Preview Card (4 cols on desktop) */}
+          <div className={`lg:col-span-4 ${showPreviewModal ? 'block' : 'hidden lg:block'} sticky top-24 space-y-4`}>
+            <div className="flex items-center justify-between border-b-2 border-black pb-2">
+              <span className="font-display font-bold text-sm uppercase tracking-wider flex items-center gap-1.5">
+                <Sparkles size={16} className="text-yellow-600" />
+                Live Card Preview
+              </span>
+              <span className="text-[11px] text-gray-500 font-mono">Explore feed preview</span>
+            </div>
+
+            {/* Simulated BountyCard */}
+            <div className="bg-white border-2 border-black shadow-[6px_6px_0px_black] p-5 space-y-4">
+              {form.imageUrl ? (
+                <div className="border-2 border-black overflow-hidden h-36 bg-gray-100">
+                  <img
+                    src={form.imageUrl}
+                    alt="Preview"
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      ;(e.target as HTMLElement).style.display = 'none'
+                    }}
+                  />
+                </div>
+              ) : (
+                <div className="border-2 border-dashed border-gray-300 h-28 bg-gray-50 flex items-center justify-center text-xs text-gray-400">
+                  <span>No cover image selected</span>
+                </div>
               )}
+
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <span
+                    className="px-2 py-0.5 text-[10px] font-black uppercase tracking-wider border border-black shadow-[1px_1px_0px_black]"
+                    style={{ backgroundColor: selectedCategoryObj?.color || '#FDE047' }}
+                  >
+                    {selectedCategoryObj?.name || 'Category'}
+                  </span>
+                  <span className="px-2 py-0.5 text-[10px] font-bold border border-black bg-blue-100 text-blue-900">
+                    Open (Pending Escrow)
+                  </span>
+                </div>
+
+                <h3 className="font-display font-bold text-base leading-snug line-clamp-2">
+                  {form.title.trim() || 'Untitled Bounty'}
+                </h3>
+              </div>
+
+              <div className="flex flex-wrap gap-1">
+                {form.tags
+                  .split(',')
+                  .map((t) => t.trim())
+                  .filter(Boolean)
+                  .slice(0, 3)
+                  .map((tag) => (
+                    <span key={tag} className="px-1.5 py-0.5 text-[10px] font-mono bg-gray-100 border border-gray-300">
+                      #{tag}
+                    </span>
+                  ))}
+              </div>
+
+              <div className="flex items-center justify-between pt-3 border-t border-gray-200 text-xs">
+                <span className="font-bold flex items-center gap-1 text-black font-mono">
+                  <DollarSign size={14} />
+                  {form.rewardRaw || '0.00'} USDC
+                </span>
+                <span className="flex items-center gap-1 text-gray-600 font-mono text-[11px]">
+                  <Clock size={12} />
+                  {form.deadlineDays}d left
+                </span>
+              </div>
+            </div>
+
+            <div className="p-3 bg-white border-2 border-black text-xs text-gray-600 shadow-[2px_2px_0px_black]">
+              <p className="font-bold text-black mb-1">Preview Tips:</p>
+              <ul className="list-disc list-inside space-y-1 text-[11px]">
+                <li>Detailed requirements increase contribution quality by 3x.</li>
+                <li>Clear acceptance criteria protect both creator and contributor.</li>
+              </ul>
             </div>
           </div>
-
-          <div>
-            <label className="block text-sm font-bold mb-1.5">Tags (comma-separated)</label>
-            <input
-              type="text"
-              placeholder="react, bug, typescript, smart-contracts"
-              value={form.tags}
-              onChange={(e) => setForm({ ...form, tags: e.target.value })}
-              className="w-full border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-300"
-            />
-          </div>
-
-          <div className="bg-yellow-50 border-2 border-yellow-400 p-3.5 flex gap-2.5 text-xs text-yellow-900">
-            <Info size={16} className="shrink-0 mt-0.5 text-yellow-700" />
-            <div>
-              <strong>Process:</strong> Step 1 registers the bounty on Arc Testnet. Step 2 approves USDC transfer. Step 3 transfers reward into escrow.
-            </div>
-          </div>
-
-          <button
-            onClick={handleCreate}
-            disabled={createPending || createConfirming || !user || !isConnected}
-            className="w-full border-2 border-black bg-black text-white py-3.5 font-bold text-sm hover:bg-yellow-300 hover:text-black transition-all disabled:opacity-50 shadow-[4px_4px_0px_#EAB308] active:translate-x-0.5 active:translate-y-0.5"
-          >
-            {createPending
-              ? 'Confirm in wallet…'
-              : createConfirming
-              ? 'Creating onchain…'
-              : 'Create Bounty (Step 1 of 3)'}
-          </button>
         </div>
       )}
 
       {/* STEP 2: APPROVE */}
       {step === 'approve' && (
-        <div className="space-y-5 bg-white border-2 border-black p-6 shadow-[4px_4px_0px_black]">
-          <h2 className="font-display font-bold text-lg mb-2">Step 2: Approve USDC Spending</h2>
-          <p className="text-sm text-gray-600">
-            Authorize the BountyBoard contract to transfer <strong className="tabular-nums font-bold">{form.rewardRaw} USDC</strong> from your wallet.
+        <div className="max-w-xl mx-auto space-y-5 bg-white border-2 border-black p-8 shadow-[6px_6px_0px_black]">
+          <div className="flex items-center gap-2 border-b-2 border-black pb-3">
+            <span className="w-6 h-6 rounded-full bg-yellow-300 border-2 border-black text-xs font-black flex items-center justify-center">
+              2
+            </span>
+            <h2 className="font-display font-black text-xl">Approve USDC Allowance</h2>
+          </div>
+
+          <p className="text-sm text-gray-700 leading-relaxed">
+            Authorize the verified BountyBoard escrow smart contract to transfer{' '}
+            <strong className="tabular-nums font-bold text-black">{form.rewardRaw} USDC</strong> from your connected
+            wallet.
           </p>
+
           {createHash && (
-            <div className="pt-2">
+            <div className="p-3 bg-gray-50 border border-black text-xs font-mono">
+              <span className="text-gray-500">Creation Tx: </span>
               <a
                 href={explorerTx(createHash)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-xs text-gray-600 hover:text-black underline"
+                className="underline hover:text-black inline-flex items-center gap-1"
               >
+                {createHash.slice(0, 14)}…{createHash.slice(-8)}
                 <ExternalLink size={12} />
-                View creation transaction on Arc Explorer
               </a>
             </div>
           )}
+
           <button
             onClick={handleApprove}
             disabled={approvePending || approveConfirming}
-            className="w-full border-2 border-black bg-black text-white py-3.5 font-bold text-sm hover:bg-yellow-300 hover:text-black transition-all disabled:opacity-60 shadow-[4px_4px_0px_#EAB308]"
+            className="w-full border-2 border-black bg-black text-white py-3.5 font-bold text-sm uppercase tracking-wider hover:bg-yellow-300 hover:text-black transition-all disabled:opacity-60 shadow-[4px_4px_0px_#EAB308]"
           >
-            {approvePending ? 'Confirm in wallet…' : approveConfirming ? 'Approving USDC…' : 'Approve USDC'}
+            {approvePending ? 'Confirm in Wallet…' : approveConfirming ? 'Approving USDC…' : 'Approve USDC'}
           </button>
         </div>
       )}
 
       {/* STEP 3: FUND */}
       {step === 'fund' && (
-        <div className="space-y-5 bg-white border-2 border-black p-6 shadow-[4px_4px_0px_black]">
-          <h2 className="font-display font-bold text-lg mb-2">Step 3: Fund the Bounty Escrow</h2>
-          <p className="text-sm text-gray-600">
-            Deposit <strong className="tabular-nums font-bold">{form.rewardRaw} USDC</strong> into the smart contract. Funds remain safely in escrow until you approve an acceptable submission.
+        <div className="max-w-xl mx-auto space-y-5 bg-white border-2 border-black p-8 shadow-[6px_6px_0px_black]">
+          <div className="flex items-center gap-2 border-b-2 border-black pb-3">
+            <span className="w-6 h-6 rounded-full bg-yellow-300 border-2 border-black text-xs font-black flex items-center justify-center">
+              3
+            </span>
+            <h2 className="font-display font-black text-xl">Deposit Reward into Escrow</h2>
+          </div>
+
+          <p className="text-sm text-gray-700 leading-relaxed">
+            Deposit <strong className="tabular-nums font-bold text-black">{form.rewardRaw} USDC</strong> directly into
+            the smart contract. Funds are programmatically secured until you verify and approve an open-source
+            contributor&apos;s solution.
           </p>
+
           <button
             onClick={handleFund}
             disabled={fundPending || fundConfirming}
-            className="w-full border-2 border-black bg-black text-white py-3.5 font-bold text-sm hover:bg-yellow-300 hover:text-black transition-all disabled:opacity-60 shadow-[4px_4px_0px_#EAB308]"
+            className="w-full border-2 border-black bg-black text-white py-4 font-black text-sm uppercase tracking-wider hover:bg-yellow-300 hover:text-black transition-all disabled:opacity-60 shadow-[4px_4px_0px_#EAB308]"
           >
-            {fundPending ? 'Confirm in wallet…' : fundConfirming ? 'Funding escrow…' : `Lock & Fund ${form.rewardRaw} USDC`}
+            {fundPending
+              ? 'Confirm in Wallet…'
+              : fundConfirming
+              ? 'Depositing Escrow…'
+              : `Deposit ${form.rewardRaw} USDC & Launch Bounty`}
           </button>
         </div>
       )}
 
       {/* STEP 4: DONE */}
       {step === 'done' && (
-        <div className="border-2 border-black p-8 bg-green-50 shadow-[4px_4px_0px_black] text-center space-y-4">
-          <div className="w-14 h-14 border-2 border-black bg-green-300 flex items-center justify-center mx-auto text-3xl font-bold shadow-[2px_2px_0px_black]">
+        <div className="max-w-lg mx-auto border-2 border-black p-8 bg-green-50 shadow-[6px_6px_0px_black] text-center space-y-4">
+          <div className="w-16 h-16 border-2 border-black bg-green-300 flex items-center justify-center mx-auto text-3xl font-bold shadow-[3px_3px_0px_black]">
             ✓
           </div>
-          <h2 className="font-display font-bold text-xl">Bounty Funded & Active!</h2>
-          <p className="text-sm text-gray-600">
-            Your bounty is now published on Arc Testnet and visible in the public Explorer and your Dashboard.
+          <h2 className="font-display font-black text-2xl">Bounty Escrow Active!</h2>
+          <p className="text-sm text-gray-700">
+            Your bounty is now published on Arc Testnet, indexed in PostgreSQL, and visible in the public Explore directory.
           </p>
           {fundHash && (
             <div>

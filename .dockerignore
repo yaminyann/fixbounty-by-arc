@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+.github
+fixbounty_arc_ecosystem_platform_th4sds - new code
+contracts/out
+contracts/cache
+contracts/broadcast
+.env.local
+*.log
+

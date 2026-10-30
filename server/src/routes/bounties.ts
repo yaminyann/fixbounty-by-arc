@@ -6,9 +6,23 @@ import { fetchOnchainBounty, verifyTxReceipt } from '../chain.js'
 
 export const bountiesRouter = Router()
 
+// GET /api/bounties/categories - List all bounty categories
+bountiesRouter.get('/categories', async (_req: Request, res: Response) => {
+  try {
+    const result = await query(
+      'SELECT id, slug, name, description, color FROM categories ORDER BY id ASC'
+    )
+    res.json({ categories: result.rows })
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message })
+  }
+})
+
 // GET /api/bounties - List bounties with search and filters
 bountiesRouter.get('/', async (req: Request, res: Response) => {
-  const status = req.query.status !== undefined ? Number(req.query.status) : undefined
+  const status = req.query.status !== undefined && req.query.status !== 'all' ? Number(req.query.status) : undefined
+  const category = (req.query.category as string)?.trim()
+  const moderation = (req.query.moderation_status as string)?.trim()
   const search = (req.query.search as string)?.trim()
   const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100)
   const offset = Math.max(Number(req.query.offset) || 0, 0)
@@ -22,6 +36,12 @@ bountiesRouter.get('/', async (req: Request, res: Response) => {
       b.title,
       b.description,
       b.acceptance_criteria AS "acceptanceCriteria",
+      b.objectives,
+      b.requirements,
+      b.rules,
+      b.eligibility,
+      b.deliverables,
+      b.submission_instructions AS "submissionInstructions",
       b.reward_amount::text AS "rewardAmount",
       b.token_symbol AS "tokenSymbol",
       b.token_address AS "tokenAddress",
@@ -30,10 +50,18 @@ bountiesRouter.get('/', async (req: Request, res: Response) => {
       b.links,
       b.tx_hash AS "txHash",
       b.onchain_status AS "onchainStatus",
+      b.category_slug AS "categorySlug",
+      c.name AS "categoryName",
+      c.color AS "categoryColor",
+      COALESCE(b.moderation_status, 'approved') AS "moderationStatus",
+      b.moderation_note AS "moderationNote",
+      b.image_url AS "imageUrl",
+      b.contract_version AS "contractVersion",
       b.created_at AS "createdAt",
       b.updated_at AS "updatedAt",
       (SELECT COUNT(*)::int FROM submissions s WHERE s.bounty_id = b.id) AS "submissionsCount"
     FROM bounties b
+    LEFT JOIN categories c ON c.slug = b.category_slug
     WHERE 1=1
   `
   const params: unknown[] = []
@@ -41,6 +69,19 @@ bountiesRouter.get('/', async (req: Request, res: Response) => {
   if (status !== undefined && !isNaN(status)) {
     params.push(status)
     sql += ` AND b.onchain_status = $${params.length}`
+  }
+
+  if (category && category !== 'all') {
+    params.push(category)
+    sql += ` AND b.category_slug = $${params.length}`
+  }
+
+  // Filter by moderation: if specified, use it; otherwise default to approved
+  if (moderation && moderation !== 'all') {
+    params.push(moderation)
+    sql += ` AND b.moderation_status = $${params.length}`
+  } else if (!moderation) {
+    sql += ` AND (b.moderation_status = 'approved' OR b.moderation_status IS NULL)`
   }
 
   if (search) {
@@ -74,6 +115,12 @@ bountiesRouter.get('/creator/:identifier', async (req: Request, res: Response) =
       b.title,
       b.description,
       b.acceptance_criteria AS "acceptanceCriteria",
+      b.objectives,
+      b.requirements,
+      b.rules,
+      b.eligibility,
+      b.deliverables,
+      b.submission_instructions AS "submissionInstructions",
       b.reward_amount::text AS "rewardAmount",
       b.token_symbol AS "tokenSymbol",
       b.token_address AS "tokenAddress",
@@ -113,6 +160,12 @@ bountiesRouter.get('/:id', optionalAuth, async (req: Request, res: Response) => 
       b.title,
       b.description,
       b.acceptance_criteria AS "acceptanceCriteria",
+      b.objectives,
+      b.requirements,
+      b.rules,
+      b.eligibility,
+      b.deliverables,
+      b.submission_instructions AS "submissionInstructions",
       b.reward_amount::text AS "rewardAmount",
       b.token_symbol AS "tokenSymbol",
       b.token_address AS "tokenAddress",
@@ -121,10 +174,18 @@ bountiesRouter.get('/:id', optionalAuth, async (req: Request, res: Response) => 
       b.links,
       b.tx_hash AS "txHash",
       b.onchain_status AS "onchainStatus",
+      b.category_slug AS "categorySlug",
+      c.name AS "categoryName",
+      c.color AS "categoryColor",
+      COALESCE(b.moderation_status, 'approved') AS "moderationStatus",
+      b.moderation_note AS "moderationNote",
+      b.image_url AS "imageUrl",
+      b.contract_version AS "contractVersion",
       b.created_at AS "createdAt",
       b.updated_at AS "updatedAt",
       (SELECT COUNT(*)::int FROM submissions s WHERE s.bounty_id = b.id) AS "submissionsCount"
     FROM bounties b
+    LEFT JOIN categories c ON c.slug = b.category_slug
     WHERE ${isNumeric ? 'b.onchain_id = $1' : 'b.id = $1'}
   `
 
@@ -144,10 +205,19 @@ const CreateBountySchema = z.object({
   title: z.string().min(3).max(255),
   description: z.string().min(10),
   acceptanceCriteria: z.string().min(5),
+  objectives: z.string().optional(),
+  requirements: z.string().optional(),
+  rules: z.string().optional(),
+  eligibility: z.string().optional(),
+  deliverables: z.string().optional(),
+  submissionInstructions: z.string().optional(),
   rewardAmount: z.string().regex(/^\d+$/), // string base units (e.g. "2500000")
   deadline: z.string(), // ISO string or timestamp
   tags: z.array(z.string()).default([]),
   links: z.array(z.string()).default([]),
+  categorySlug: z.string().optional(),
+  imageUrl: z.string().optional(),
+  contractVersion: z.number().int().optional(),
   txHash: z.string().optional(),
 })
 
@@ -164,10 +234,19 @@ bountiesRouter.post('/', requireAuth, async (req: Request, res: Response) => {
     title,
     description,
     acceptanceCriteria,
+    objectives,
+    requirements,
+    rules,
+    eligibility,
+    deliverables,
+    submissionInstructions,
     rewardAmount,
     deadline,
     tags,
     links,
+    categorySlug,
+    imageUrl,
+    contractVersion,
     txHash,
   } = parsed.data
 
@@ -204,23 +283,40 @@ bountiesRouter.post('/', requireAuth, async (req: Request, res: Response) => {
           title,
           description,
           acceptance_criteria,
+          objectives,
+          requirements,
+          rules,
+          eligibility,
+          deliverables,
+          submission_instructions,
           reward_amount,
           deadline,
           tags,
           links,
+          category_slug,
+          image_url,
+          contract_version,
           tx_hash,
           onchain_status,
           updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, NOW())
         ON CONFLICT (onchain_id) DO UPDATE SET
           title = EXCLUDED.title,
           description = EXCLUDED.description,
           acceptance_criteria = EXCLUDED.acceptance_criteria,
+          objectives = EXCLUDED.objectives,
+          requirements = EXCLUDED.requirements,
+          rules = EXCLUDED.rules,
+          eligibility = EXCLUDED.eligibility,
+          deliverables = EXCLUDED.deliverables,
+          submission_instructions = EXCLUDED.submission_instructions,
           reward_amount = EXCLUDED.reward_amount,
           deadline = EXCLUDED.deadline,
           tags = EXCLUDED.tags,
           links = EXCLUDED.links,
+          category_slug = COALESCE(EXCLUDED.category_slug, bounties.category_slug),
+          image_url = COALESCE(EXCLUDED.image_url, bounties.image_url),
           tx_hash = COALESCE(EXCLUDED.tx_hash, bounties.tx_hash),
           onchain_status = EXCLUDED.onchain_status,
           updated_at = NOW()
@@ -232,12 +328,22 @@ bountiesRouter.post('/', requireAuth, async (req: Request, res: Response) => {
           title,
           description,
           acceptance_criteria AS "acceptanceCriteria",
+          objectives,
+          requirements,
+          rules,
+          eligibility,
+          deliverables,
+          submission_instructions AS "submissionInstructions",
           reward_amount::text AS "rewardAmount",
           token_symbol AS "tokenSymbol",
           token_address AS "tokenAddress",
           deadline,
           tags,
           links,
+          category_slug AS "categorySlug",
+          image_url AS "imageUrl",
+          contract_version AS "contractVersion",
+          moderation_status AS "moderationStatus",
           tx_hash AS "txHash",
           onchain_status AS "onchainStatus",
           created_at AS "createdAt",
@@ -250,10 +356,19 @@ bountiesRouter.post('/', requireAuth, async (req: Request, res: Response) => {
           title,
           description,
           acceptanceCriteria,
+          objectives || null,
+          requirements || null,
+          rules || null,
+          eligibility || null,
+          deliverables || null,
+          submissionInstructions || null,
           rewardAmount,
           deadlineDate,
           tags,
           links,
+          categorySlug || null,
+          imageUrl || null,
+          contractVersion || 1,
           txHash || null,
           initialStatus,
         ]
@@ -267,14 +382,23 @@ bountiesRouter.post('/', requireAuth, async (req: Request, res: Response) => {
           title,
           description,
           acceptance_criteria,
+          objectives,
+          requirements,
+          rules,
+          eligibility,
+          deliverables,
+          submission_instructions,
           reward_amount,
           deadline,
           tags,
           links,
+          category_slug,
+          image_url,
+          contract_version,
           tx_hash,
           onchain_status
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
         RETURNING
           id,
           onchain_id AS "onchainId",
@@ -283,12 +407,22 @@ bountiesRouter.post('/', requireAuth, async (req: Request, res: Response) => {
           title,
           description,
           acceptance_criteria AS "acceptanceCriteria",
+          objectives,
+          requirements,
+          rules,
+          eligibility,
+          deliverables,
+          submission_instructions AS "submissionInstructions",
           reward_amount::text AS "rewardAmount",
           token_symbol AS "tokenSymbol",
           token_address AS "tokenAddress",
           deadline,
           tags,
           links,
+          category_slug AS "categorySlug",
+          image_url AS "imageUrl",
+          contract_version AS "contractVersion",
+          moderation_status AS "moderationStatus",
           tx_hash AS "txHash",
           onchain_status AS "onchainStatus",
           created_at AS "createdAt",
@@ -300,10 +434,19 @@ bountiesRouter.post('/', requireAuth, async (req: Request, res: Response) => {
           title,
           description,
           acceptanceCriteria,
+          objectives || null,
+          requirements || null,
+          rules || null,
+          eligibility || null,
+          deliverables || null,
+          submissionInstructions || null,
           rewardAmount,
           deadlineDate,
           tags,
           links,
+          categorySlug || null,
+          imageUrl || null,
+          contractVersion || 1,
           txHash || null,
           initialStatus,
         ]
@@ -351,6 +494,13 @@ const UpdateBountySchema = z.object({
   title: z.string().min(3).max(255).optional(),
   description: z.string().min(10).optional(),
   acceptanceCriteria: z.string().min(5).optional(),
+  objectives: z.string().optional(),
+  requirements: z.string().optional(),
+  rules: z.string().optional(),
+  eligibility: z.string().optional(),
+  deliverables: z.string().optional(),
+  submissionInstructions: z.string().optional(),
+  imageUrl: z.string().optional(),
   tags: z.array(z.string()).optional(),
   links: z.array(z.string()).optional(),
 })
@@ -398,10 +548,17 @@ bountiesRouter.put('/:id', requireAuth, async (req: Request, res: Response) => {
       title = COALESCE($1, title),
       description = COALESCE($2, description),
       acceptance_criteria = COALESCE($3, acceptance_criteria),
-      tags = COALESCE($4, tags),
-      links = COALESCE($5, links),
+      objectives = COALESCE($4, objectives),
+      requirements = COALESCE($5, requirements),
+      rules = COALESCE($6, rules),
+      eligibility = COALESCE($7, eligibility),
+      deliverables = COALESCE($8, deliverables),
+      submission_instructions = COALESCE($9, submission_instructions),
+      image_url = COALESCE($10, image_url),
+      tags = COALESCE($11, tags),
+      links = COALESCE($12, links),
       updated_at = NOW()
-    WHERE id = $6
+    WHERE id = $13
     RETURNING
       id,
       onchain_id AS "onchainId",
@@ -410,12 +567,19 @@ bountiesRouter.put('/:id', requireAuth, async (req: Request, res: Response) => {
       title,
       description,
       acceptance_criteria AS "acceptanceCriteria",
+      objectives,
+      requirements,
+      rules,
+      eligibility,
+      deliverables,
+      submission_instructions AS "submissionInstructions",
       reward_amount::text AS "rewardAmount",
       token_symbol AS "tokenSymbol",
       token_address AS "tokenAddress",
       deadline,
       tags,
       links,
+      image_url AS "imageUrl",
       tx_hash AS "txHash",
       onchain_status AS "onchainStatus",
       created_at AS "createdAt",
@@ -425,6 +589,13 @@ bountiesRouter.put('/:id', requireAuth, async (req: Request, res: Response) => {
       updates.title || null,
       updates.description || null,
       updates.acceptanceCriteria || null,
+      updates.objectives || null,
+      updates.requirements || null,
+      updates.rules || null,
+      updates.eligibility || null,
+      updates.deliverables || null,
+      updates.submissionInstructions || null,
+      updates.imageUrl || null,
       updates.tags || null,
       updates.links || null,
       bounty.id,

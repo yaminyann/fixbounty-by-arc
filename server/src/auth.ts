@@ -8,6 +8,11 @@ export interface AuthUser {
   email: string | null
   display_name: string | null
   photo_url: string | null
+  bio?: string | null
+  github?: string | null
+  twitter?: string | null
+  website?: string | null
+  is_admin?: boolean
   created_at: string
   updated_at: string
 }

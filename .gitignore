@@ -4,6 +4,11 @@
 .env.*.local
 *.env
 
+# Temporary export directory
+*new code*
+fixbounty_arc_ecosystem_platform_th4sds*
+
+
 
 # Exclude documentation directory from GitHub push as requested (kept locally)
 docs/

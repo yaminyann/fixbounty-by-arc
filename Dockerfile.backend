@@ -5,11 +5,11 @@ WORKDIR /app
 # Install curl for healthcheck
 RUN apk add --no-cache curl
 
-# Copy dependency manifests
-COPY package.json bun.lock ./
+# Copy backend dependency manifest
+COPY server/package.json ./package.json
 
-# Install dependencies
-RUN bun install --frozen-lockfile || bun install
+# Install dependencies (only lightweight server packages, no heavy frontend bundles)
+RUN bun install --production
 
 # Copy application and server source
 COPY server/ ./server/

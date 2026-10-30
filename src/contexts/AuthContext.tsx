@@ -7,9 +7,19 @@ import {
 } from 'firebase/auth'
 import { auth, googleProvider, isFirebaseConfigured } from '@/firebase'
 
+const ADMIN_EMAILS = (
+  (import.meta as { env?: { VITE_ADMIN_EMAILS?: string } }).env?.VITE_ADMIN_EMAILS ||
+  'yaminv75@gmail.com,admin@taskfi.io,admin@fixbounty.io'
+)
+  .toLowerCase()
+  .split(',')
+  .map((e) => e.trim())
+  .filter(Boolean)
+
 interface AuthContextValue {
   user: User | null
   loading: boolean
+  isAdmin: boolean
   isConfigured: boolean
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
@@ -21,6 +31,7 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(auth !== null)
+  const [isAdmin, setIsAdmin] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -28,6 +39,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u)
       setLoading(false)
+      if (u) {
+        if (u.email && ADMIN_EMAILS.includes(u.email.toLowerCase())) {
+          setIsAdmin(true)
+        }
+        void u
+          .getIdToken()
+          .then((token) =>
+            fetch('/api/users/me', { headers: { Authorization: `Bearer ${token}` } })
+              .then((res) => (res.ok ? (res.json() as Promise<{ is_admin?: boolean; isAdmin?: boolean } | null>) : null))
+              .then((profile) => {
+                if (profile?.is_admin === true || profile?.isAdmin === true) {
+                  setIsAdmin(true)
+                }
+              })
+          )
+          .catch(() => {})
+      } else {
+        setIsAdmin(false)
+      }
     })
     return unsubscribe
   }, [])
@@ -71,6 +101,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         user,
         loading,
+        isAdmin,
         isConfigured: isFirebaseConfigured,
         signInWithGoogle,
         signOut,

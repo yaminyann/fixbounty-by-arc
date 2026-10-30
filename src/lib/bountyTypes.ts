@@ -45,6 +45,23 @@ export interface RawBounty {
   fundedAt: bigint
 }
 
+// Category interface
+export interface Category {
+  id: number
+  slug: string
+  name: string
+  description?: string
+  color: string
+}
+
+export type ModerationStatus = 'pending' | 'approved' | 'rejected'
+
+export const MODERATION_COLORS: Record<ModerationStatus, string> = {
+  pending: 'bg-yellow-200 text-yellow-900 border-yellow-600',
+  approved: 'bg-green-200 text-green-900 border-green-600',
+  rejected: 'bg-red-200 text-red-900 border-red-600',
+}
+
 // Normalized bounty for display
 export interface Bounty {
   id: number
@@ -58,6 +75,26 @@ export interface Bounty {
   approvedContributor: `0x${string}`
   fundedAt: Date | null
   isExpired: boolean
+  categorySlug?: string
+  categoryName?: string
+  categoryColor?: string
+  moderationStatus?: ModerationStatus
+  moderationNote?: string
+  imageUrl?: string
+  contractVersion?: number
+}
+
+// V2 protocol fee preview
+export interface FeePreview {
+  feeAmount: bigint
+  contributorPayout: bigint
+  feeBps: bigint
+  feePercent: string
+}
+
+export function parseFeePreview(feeAmount: bigint, contributorPayout: bigint, feeBps: bigint): FeePreview {
+  const pct = (Number(feeBps) / 100).toFixed(2)
+  return { feeAmount, contributorPayout, feeBps, feePercent: `${pct}%` }
 }
 
 export function normalizeBounty(raw: RawBounty): Bounty {
@@ -99,6 +136,26 @@ export function parseOnchainError(err: unknown): string {
 
 export function formatAddress(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`
+}
+
+/**
+ * Safely format USDC amounts from either base units (e.g. "2500000" -> "2.50")
+ * or standard numbers/strings (e.g. 2.5 -> "2.50").
+ * USDC has 6 decimals on Arc Testnet & Mainnet.
+ */
+export function formatUsdcAmount(val: string | number | bigint | null | undefined): string {
+  if (val === null || val === undefined || val === '') return '0.00'
+  const str = String(val).trim()
+  const num = Number(str)
+  if (isNaN(num) || num <= 0) return '0.00'
+
+  // If integer string without decimal point and >= 1000, it's atomic base units (6 decimals)
+  if (!str.includes('.') && num >= 1000) {
+    const formatted = num / 1_000_000
+    return formatted.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  }
+
+  return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 export function toSafeDate(val: unknown): Date {

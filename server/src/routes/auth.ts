@@ -38,7 +38,7 @@ authRouter.get('/wallet-challenge', async (req: Request, res: Response) => {
 
   const nonce = crypto.randomBytes(32).toString('hex')
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
-  const challengeText = `Sign this message to verify ownership of wallet ${address} on FixBounty.\n\nNonce: ${nonce}\nIssued At: ${new Date().toISOString()}\nExpires At: ${expiresAt.toISOString()}`
+  const challengeText = `Sign this message to verify ownership of wallet ${address} on TaskFi.\n\nNonce: ${nonce}\nIssued At: ${new Date().toISOString()}\nExpires At: ${expiresAt.toISOString()}`
 
   await query(
     `INSERT INTO wallet_challenges (address, nonce, challenge_text, expires_at)

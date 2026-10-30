@@ -5,8 +5,8 @@ import { optionalAuth } from '../auth.js'
 export const adminRouter = Router()
 
 // Read admin credentials from environment with secure defaults
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || process.env.ADMIN_SECRET || 'fixbounty_admin_2026_arc'
-const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || process.env.VITE_ADMIN_EMAILS || 'yaminv75@gmail.com,admin@fixbounty.io')
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || process.env.ADMIN_SECRET || 'taskfi_admin_2026_arc'
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || process.env.VITE_ADMIN_EMAILS || 'yaminv75@gmail.com,admin@taskfi.io,admin@fixbounty.io')
   .toLowerCase()
   .split(',')
   .map((e) => e.trim())
@@ -61,13 +61,25 @@ adminRouter.post('/verify', optionalAuth, (req: Request, res: Response) => {
   })
 })
 
+// Helper to convert 6-decimal USDC base units (e.g. "2500000") to standard decimal string ("2.50")
+function baseUnitsToUsdc(raw: string | number | null | undefined): string {
+  if (!raw) return '0.00'
+  const val = Number(raw)
+  if (isNaN(val) || val <= 0) return '0.00'
+  return (val / 1_000_000).toFixed(2)
+}
+
 // GET /api/admin/stats - Global platform analytics & KPI summary
 adminRouter.get('/stats', optionalAuth, requireAdmin, async (_req: Request, res: Response) => {
   try {
-    // 1. Bounty stats & status distribution
+    // 1. Bounty stats & status distribution with explicit 6-decimal USDC metrics
     const bountyStatsRes = await query<{
       total_bounties: number
-      total_rewards: string
+      total_rewards_raw: string
+      total_funded_raw: string
+      total_claimed_raw: string
+      total_active_raw: string
+      total_refunded_raw: string
       open_count: number
       funded_count: number
       approved_count: number
@@ -77,7 +89,11 @@ adminRouter.get('/stats', optionalAuth, requireAdmin, async (_req: Request, res:
     }>(`
       SELECT
         COUNT(*)::int AS total_bounties,
-        COALESCE(SUM(reward_amount), 0)::text AS total_rewards,
+        COALESCE(SUM(reward_amount), 0)::text AS total_rewards_raw,
+        COALESCE(SUM(reward_amount) FILTER (WHERE onchain_status IN (1, 2, 3)), 0)::text AS total_funded_raw,
+        COALESCE(SUM(reward_amount) FILTER (WHERE onchain_status = 3), 0)::text AS total_claimed_raw,
+        COALESCE(SUM(reward_amount) FILTER (WHERE onchain_status IN (1, 2)), 0)::text AS total_active_raw,
+        COALESCE(SUM(reward_amount) FILTER (WHERE onchain_status = 4), 0)::text AS total_refunded_raw,
         COUNT(*) FILTER (WHERE onchain_status = 0)::int AS open_count,
         COUNT(*) FILTER (WHERE onchain_status = 1)::int AS funded_count,
         COUNT(*) FILTER (WHERE onchain_status = 2)::int AS approved_count,
@@ -114,9 +130,24 @@ adminRouter.get('/stats', optionalAuth, requireAdmin, async (_req: Request, res:
         (SELECT COUNT(DISTINCT submitter_wallet)::int FROM submissions WHERE submitter_wallet IS NOT NULL) AS total_submitters
     `)
 
+    // 4. Platform fee events aggregate
+    const feeAggregateRes = await query<{
+      total_fee_events: number
+      total_fees_raw: string
+    }>(`
+      SELECT
+        COUNT(*)::int AS total_fee_events,
+        COALESCE(SUM(fee_amount), 0)::text AS total_fees_raw
+      FROM fee_events
+    `)
+
     const b = bountyStatsRes.rows[0] || {
       total_bounties: 0,
-      total_rewards: '0',
+      total_rewards_raw: '0',
+      total_funded_raw: '0',
+      total_claimed_raw: '0',
+      total_active_raw: '0',
+      total_refunded_raw: '0',
       open_count: 0,
       funded_count: 0,
       approved_count: 0,
@@ -138,17 +169,38 @@ adminRouter.get('/stats', optionalAuth, requireAdmin, async (_req: Request, res:
       total_submitters: 0,
     }
 
+    const f = feeAggregateRes.rows[0] || {
+      total_fee_events: 0,
+      total_fees_raw: '0',
+    }
+
     res.json({
       success: true,
       bounties: {
         total: b.total_bounties,
-        totalRewards: b.total_rewards,
+        totalRewardsRaw: b.total_rewards_raw,
+        totalRewards: baseUnitsToUsdc(b.total_rewards_raw), // normalized to standard USDC string (e.g. "2.50")
+        totalFunded: baseUnitsToUsdc(b.total_funded_raw),
+        totalClaimed: baseUnitsToUsdc(b.total_claimed_raw),
+        totalActiveEscrow: baseUnitsToUsdc(b.total_active_raw),
+        totalRefunded: baseUnitsToUsdc(b.total_refunded_raw),
         open: b.open_count,
         funded: b.funded_count,
         approved: b.approved_count,
         claimed: b.claimed_count,
         refunded: b.refunded_count,
         cancelled: b.cancelled_count,
+      },
+      revenue: {
+        totalEscrowFundedUsdc: baseUnitsToUsdc(b.total_funded_raw),
+        contributorPayoutsSettledUsdc: baseUnitsToUsdc(b.total_claimed_raw),
+        activeEscrowLockedUsdc: baseUnitsToUsdc(b.total_active_raw),
+        refundedToCreatorsUsdc: baseUnitsToUsdc(b.total_refunded_raw),
+        collectedPlatformFeesUsdc: baseUnitsToUsdc(f.total_fees_raw),
+        pendingPlatformFeesUsdc: '0.00',
+        feeEventsCount: f.total_fee_events,
+        network: 'Arc Testnet (Chain ID 5042002)',
+        activeContractModel: 'BountyBoard V1: 0% Non-Custodial Direct Escrow (100% Payout to Developers)',
       },
       submissions: {
         total: s.total_submissions,
@@ -335,3 +387,291 @@ adminRouter.get('/submissions', optionalAuth, requireAdmin, async (req: Request,
     res.status(500).json({ error: (err as Error).message })
   }
 })
+
+// =============================================================================
+// Moderation & Platform Revenue Endpoints
+// =============================================================================
+
+// GET /api/admin/pending - List bounties awaiting moderation
+adminRouter.get('/pending', optionalAuth, requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const { rows } = await query(
+      `
+      SELECT
+        b.id,
+        b.onchain_id AS "bounty_id",
+        b.onchain_id AS "onchainId",
+        b.title,
+        b.description,
+        b.reward_amount::text AS "rewardAmount",
+        b.creator_wallet AS "creatorWallet",
+        b.category_slug AS "category_slug",
+        c.name AS "category_name",
+        b.tags,
+        b.image_url AS "imageUrl",
+        b.moderation_status AS "moderationStatus",
+        b.created_at AS "created_at"
+      FROM bounties b
+      LEFT JOIN categories c ON c.slug = b.category_slug
+      WHERE b.moderation_status = 'pending'
+      ORDER BY b.created_at ASC
+      `
+    )
+    res.json({ bounties: rows })
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+// POST /api/admin/bounties/:id/approve - Approve pending bounty
+adminRouter.post('/bounties/:id/approve', optionalAuth, requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+    const isNumeric = /^\d+$/.test(id)
+    const { note } = req.body || {}
+    const adminUid = req.user?.firebase_uid || req.user?.id || 'admin_passkey'
+
+    await query(
+      `
+      UPDATE bounties
+      SET
+        moderation_status = 'approved',
+        moderation_note = $1,
+        moderated_by = $2,
+        moderated_at = NOW(),
+        updated_at = NOW()
+      WHERE ${isNumeric ? 'onchain_id = $3' : 'id = $3'}
+      `,
+      [note ?? null, adminUid, isNumeric ? Number(id) : id]
+    )
+
+    await query(
+      `
+      INSERT INTO admin_log (admin_uid, action, target_type, target_id, detail, notes)
+      VALUES ($1, 'approve_bounty', 'bounty', $2, $3::jsonb, $4)
+      `,
+      [adminUid, String(id), JSON.stringify({ note }), note || 'Bounty approved for Explore']
+    )
+
+    res.json({ ok: true, success: true, message: `Bounty #${id} approved.` })
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+// POST /api/admin/bounties/:id/reject - Reject bounty with mandatory reason
+adminRouter.post('/bounties/:id/reject', optionalAuth, requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+    const isNumeric = /^\d+$/.test(id)
+    const { note } = req.body || {}
+
+    if (!note || typeof note !== 'string' || !note.trim()) {
+      res.status(400).json({ error: 'Rejection reason note is required.' })
+      return
+    }
+
+    const adminUid = req.user?.firebase_uid || req.user?.id || 'admin_passkey'
+
+    await query(
+      `
+      UPDATE bounties
+      SET
+        moderation_status = 'rejected',
+        moderation_note = $1,
+        moderated_by = $2,
+        moderated_at = NOW(),
+        updated_at = NOW()
+      WHERE ${isNumeric ? 'onchain_id = $3' : 'id = $3'}
+      `,
+      [note.trim(), adminUid, isNumeric ? Number(id) : id]
+    )
+
+    await query(
+      `
+      INSERT INTO admin_log (admin_uid, action, target_type, target_id, detail, notes)
+      VALUES ($1, 'reject_bounty', 'bounty', $2, $3::jsonb, $4)
+      `,
+      [adminUid, String(id), JSON.stringify({ note: note.trim() }), note.trim()]
+    )
+
+    res.json({ ok: true, success: true, message: `Bounty #${id} rejected.` })
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+// GET /api/admin/revenue - Platform fee summary & financial transparency ledger
+adminRouter.get('/revenue', optionalAuth, requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    // 1. Escrow Volume Aggregate from Bounties
+    const escrowRes = await query<{
+      total_funded_raw: string
+      total_claimed_raw: string
+      total_active_raw: string
+      total_refunded_raw: string
+    }>(`
+      SELECT
+        COALESCE(SUM(reward_amount) FILTER (WHERE onchain_status IN (1, 2, 3)), 0)::text AS total_funded_raw,
+        COALESCE(SUM(reward_amount) FILTER (WHERE onchain_status = 3), 0)::text AS total_claimed_raw,
+        COALESCE(SUM(reward_amount) FILTER (WHERE onchain_status IN (1, 2)), 0)::text AS total_active_raw,
+        COALESCE(SUM(reward_amount) FILTER (WHERE onchain_status = 4), 0)::text AS total_refunded_raw
+      FROM bounties
+    `)
+    const esc = escrowRes.rows[0]
+
+    // 2. Verified Protocol Fee Events from Ledger
+    const summaryRes = await query<{
+      total_claims: number
+      total_fees_raw: string
+      total_rewards_raw: string
+      network: string
+    }>(
+      `
+      SELECT
+        COUNT(*)::int AS total_claims,
+        COALESCE(SUM(fee_amount), 0)::text AS total_fees_raw,
+        COALESCE(SUM(reward_amount), 0)::text AS total_rewards_raw,
+        network
+      FROM fee_events
+      GROUP BY network
+      `
+    )
+
+    const recentRes = await query(
+      `
+      SELECT
+        id,
+        bounty_id AS "bounty_id",
+        tx_hash AS "tx_hash",
+        block_number AS "block_number",
+        contributor_addr AS "contributor_addr",
+        fee_amount::text AS "fee_amount",
+        reward_amount::text AS "reward_amount",
+        treasury_addr AS "treasury_addr",
+        network,
+        recorded_at AS "recorded_at"
+      FROM fee_events
+      ORDER BY recorded_at DESC
+      LIMIT 25
+      `
+    )
+
+    const normalizedSummary = summaryRes.rows.map((row) => ({
+      network: row.network,
+      total_claims: String(row.total_claims),
+      total_fees_raw: row.total_fees_raw,
+      total_fees: baseUnitsToUsdc(row.total_fees_raw),
+      total_rewards_raw: row.total_rewards_raw,
+      total_rewards: baseUnitsToUsdc(row.total_rewards_raw),
+    }))
+
+    const totalCollectedFeesRaw = summaryRes.rows.reduce(
+      (sum, r) => sum + (Number(r.total_fees_raw) || 0),
+      0
+    )
+
+    res.json({
+      success: true,
+      financials: {
+        totalEscrowFunded: baseUnitsToUsdc(esc?.total_funded_raw),
+        contributorPayoutsSettled: baseUnitsToUsdc(esc?.total_claimed_raw),
+        activeEscrowLocked: baseUnitsToUsdc(esc?.total_active_raw),
+        refundedToCreators: baseUnitsToUsdc(esc?.total_refunded_raw),
+        collectedPlatformFees: baseUnitsToUsdc(totalCollectedFeesRaw),
+        pendingPlatformFees: '0.00',
+        feeEventsCount: recentRes.rows.length,
+      },
+      summary: normalizedSummary,
+      recent: recentRes.rows.map((r: any) => ({
+        ...r,
+        fee_amount_usdc: baseUnitsToUsdc(r.fee_amount),
+        reward_amount_usdc: baseUnitsToUsdc(r.reward_amount),
+      })),
+      v1_note: 'Active primary contract BountyBoard V1 (0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb) operates under a 0% non-custodial fee model where 100% of escrowed USDC is settled directly to approved contributors.',
+    })
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+// POST /api/admin/fee-events - Record on-chain claim fee event
+adminRouter.post('/fee-events', optionalAuth, requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const {
+      bountyId,
+      txHash,
+      blockNumber,
+      contributorAddr,
+      rewardAmount,
+      feeAmount,
+      treasuryAddr,
+      network,
+    } = req.body || {}
+
+    if (!bountyId || !txHash || !contributorAddr || !rewardAmount) {
+      res.status(400).json({ error: 'Missing required fee event parameters.' })
+      return
+    }
+
+    await query(
+      `
+      INSERT INTO fee_events (
+        bounty_id,
+        tx_hash,
+        block_number,
+        contributor_addr,
+        reward_amount,
+        fee_amount,
+        treasury_addr,
+        network
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT (tx_hash) DO NOTHING
+      `,
+      [
+        Number(bountyId),
+        txHash,
+        blockNumber || 0,
+        contributorAddr.toLowerCase(),
+        rewardAmount,
+        feeAmount || 0,
+        treasuryAddr || '0x0000000000000000000000000000000000000000',
+        network || 'testnet',
+      ]
+    )
+
+    res.json({ ok: true, success: true })
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+// GET /api/admin/log - Fetch admin moderation and audit trail
+adminRouter.get('/log', optionalAuth, requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const result = await query(
+      `
+      SELECT
+        al.id,
+        al.admin_uid AS "admin_uid",
+        al.action,
+        al.target_type AS "target_type",
+        al.target_id AS "target_id",
+        al.detail,
+        al.notes,
+        al.created_at AS "created_at",
+        u.display_name AS "display_name",
+        u.email
+      FROM admin_log al
+      LEFT JOIN users u ON u.firebase_uid = al.admin_uid OR u.id::text = al.admin_uid
+      ORDER BY al.created_at DESC
+      LIMIT 50
+      `
+    )
+    res.json({ log: result.rows })
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message })
+  }
+})
+

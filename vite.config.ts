@@ -7,6 +7,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      'zod/mini': path.resolve(__dirname, './node_modules/porto/node_modules/zod/mini/index.js'),
     },
     dedupe: ['react', 'react-dom'],
   },
@@ -20,14 +21,29 @@ export default defineConfig({
       output: {
         manualChunks: (id) => {
           if (id.includes('node_modules')) {
+            if (id.includes('react/') || id.includes('react-dom') || id.includes('react-router-dom')) {
+              return 'react-core'
+            }
+            if (id.includes('@tanstack')) {
+              return 'tanstack-vendor'
+            }
+            if (id.includes('framer-motion')) {
+              return 'motion-vendor'
+            }
+            if (
+              id.includes('viem') ||
+              id.includes('/ox/') ||
+              id.includes('\\ox\\') ||
+              id.includes('@coinbase') ||
+              id.includes('@base-org') ||
+              id.includes('porto') ||
+              id.includes('wagmi') ||
+              id.includes('@wagmi')
+            ) {
+              return 'web3-vendor'
+            }
             if (id.includes('connectkit')) {
               return 'connectkit-vendor'
-            }
-            if (id.includes('wagmi')) {
-              return 'wagmi-vendor'
-            }
-            if (id.includes('viem')) {
-              return 'viem-vendor'
             }
             if (id.includes('@walletconnect')) {
               return 'wc-vendor'

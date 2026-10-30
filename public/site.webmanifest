@@ -1,7 +1,7 @@
 {
-  "name": "FixBounty — Onchain Bounties for Open Source",
-  "short_name": "FixBounty",
-  "description": "Post and earn USDC bounties for open-source bug fixes on Arc Testnet.",
+  "name": "TaskFi — Decentralized Task & Bounty Marketplace",
+  "short_name": "TaskFi",
+  "description": "Fund and complete Web3 tasks, bug fixes, audits, and open-source bounties on Arc.",
   "icons": [
     {
       "src": "/icon-192.png",

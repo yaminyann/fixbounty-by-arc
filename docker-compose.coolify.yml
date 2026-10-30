@@ -1,5 +1,5 @@
 # ==============================================================================
-# Coolify Production Docker Compose Configuration
+# TaskFi — Coolify Production Docker Compose Configuration
 # ==============================================================================
 version: '3.8'
 
@@ -8,15 +8,15 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-fixbounty}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-fixbounty}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
     volumes:
       - fixbounty_pgdata:/var/lib/postgresql/data
     networks:
       - fixbounty-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fixbounty} -d ${POSTGRES_DB:-fixbounty}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -31,15 +31,18 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      NODE_ENV: production
-      PORT: 4000
-      DATABASE_URL: postgresql://${POSTGRES_USER:-fixbounty}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-fixbounty}
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${PORT:-4000}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-postgres}}
       ARC_RPC_URL: ${ARC_RPC_URL:-https://rpc.testnet.arc.io}
       BOUNTY_BOARD_ADDRESS: ${VITE_BOUNTY_BOARD_ADDRESS:-0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb}
-      FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-focus-timeer-project}
+      USDC_ADDRESS: ${USDC_ADDRESS:-0x3600000000000000000000000000000000000000}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-${VITE_FIREBASE_PROJECT_ID:-focus-timeer-project}}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-fixbounty_admin_2026_arc}
       ADMIN_SECRET: ${ADMIN_SECRET:-fixbounty_admin_2026_arc}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-yaminv75@gmail.com,admin@fixbounty.io}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      JWT_SECRET: ${JWT_SECRET:-taskfi_production_super_secret_jwt_key_change_in_production_873648172}
     networks:
       - fixbounty-net
     healthcheck:
@@ -63,12 +66,22 @@ services:
         VITE_FIREBASE_MEASUREMENT_ID: ${VITE_FIREBASE_MEASUREMENT_ID}
         VITE_BOUNTY_BOARD_ADDRESS: ${VITE_BOUNTY_BOARD_ADDRESS:-0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb}
         ARC_RPC_URL: ${ARC_RPC_URL:-https://rpc.testnet.arc.io}
-        VITE_ADMIN_PASSWORD: ${VITE_ADMIN_PASSWORD:-fixbounty_admin_2026_arc}
-        VITE_ADMIN_EMAILS: ${VITE_ADMIN_EMAILS:-yaminv75@gmail.com,admin@fixbounty.io}
+        VITE_ARC_RPC_URL: ${VITE_ARC_RPC_URL:-${ARC_RPC_URL:-https://rpc.testnet.arc.io}}
+        VITE_ARC_CHAIN_ID: ${VITE_ARC_CHAIN_ID:-5042002}
+        VITE_ARC_EXPLORER_URL: ${VITE_ARC_EXPLORER_URL:-https://explorer.testnet.arc.io}
+        VITE_USDC_ADDRESS: ${VITE_USDC_ADDRESS:-${USDC_ADDRESS:-0x3600000000000000000000000000000000000000}}
+        VITE_WALLETCONNECT_PROJECT_ID: ${VITE_WALLETCONNECT_PROJECT_ID:-3fcc6bba6f1de962d911bb5b5c3dba68}
+        VITE_TREASURY_ADDRESS: ${VITE_TREASURY_ADDRESS:-0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb}
+        VITE_API_URL: ${VITE_API_URL:-/api}
+        VITE_NETWORK_ENVIRONMENT: ${VITE_NETWORK_ENVIRONMENT:-testnet}
+        VITE_ADMIN_PASSWORD: ${VITE_ADMIN_PASSWORD:-${ADMIN_PASSWORD:-fixbounty_admin_2026_arc}}
+        VITE_ADMIN_EMAILS: ${VITE_ADMIN_EMAILS:-${ADMIN_EMAILS:-yaminv75@gmail.com,admin@fixbounty.io}}
     restart: unless-stopped
     depends_on:
       backend:
         condition: service_healthy
+    ports:
+      - "${PORT_FRONTEND:-80}:80"
     networks:
       - fixbounty-net
     healthcheck:
