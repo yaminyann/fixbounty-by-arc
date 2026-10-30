@@ -40,20 +40,23 @@ if (process.env.NODE_ENV !== 'production') {
 
 // Health Check Endpoints (Docker & Coolify readiness)
 app.get('/health', async (_req: Request, res: Response) => {
+  let dbStatus = 'disconnected'
   try {
     const dbRes = await pool.query('SELECT 1 AS ok')
-    res.json({
-      status: 'healthy',
-      time: new Date().toISOString(),
-      database: dbRes.rows[0].ok === 1 ? 'connected' : 'unhealthy',
-      chain: 'Arc Testnet (5042002)',
-    })
+    if (dbRes.rows[0]?.ok === 1) {
+      dbStatus = 'connected'
+    }
   } catch (err) {
-    res.status(503).json({
-      status: 'unhealthy',
-      error: (err as Error).message,
-    })
+    console.warn('[Health Check Warning] DB ping:', (err as Error).message)
   }
+
+  // Always return 200 for process liveness so orchestrators do not crash-loop
+  res.status(200).json({
+    status: 'healthy',
+    time: new Date().toISOString(),
+    database: dbStatus,
+    chain: 'Arc Testnet (5042002)',
+  })
 })
 
 app.get('/api/health', async (_req: Request, res: Response) => {

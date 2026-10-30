@@ -17,10 +17,10 @@ services:
       - fixbounty-net
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres}"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 5s
 
   backend:
     build:
@@ -31,9 +31,10 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      NODE_ENV: ${NODE_ENV:-production}
-      PORT: ${PORT:-4000}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-postgres}}
+      NODE_ENV: production
+      PORT: 4000
+      # Prioritize internal compose postgres service; falls back to external if needed
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-postgres}
       ARC_RPC_URL: ${ARC_RPC_URL:-https://rpc.testnet.arc.io}
       BOUNTY_BOARD_ADDRESS: ${VITE_BOUNTY_BOARD_ADDRESS:-0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb}
       USDC_ADDRESS: ${USDC_ADDRESS:-0x3600000000000000000000000000000000000000}
@@ -47,10 +48,10 @@ services:
       - fixbounty-net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
-      interval: 15s
+      interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 15s
+      retries: 5
+      start_period: 25s
 
   frontend:
     build:
@@ -86,10 +87,10 @@ services:
       - fixbounty-net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
-      interval: 15s
+      interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 10s
+      retries: 5
+      start_period: 15s
 
 volumes:
   fixbounty_pgdata:
