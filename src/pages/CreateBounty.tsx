@@ -31,7 +31,7 @@ import {
 import { parseAmount } from '@/onchain-money'
 import { parseOnchainError } from '@/lib/bountyTypes'
 import { saveBountyMeta, logActivity } from '@/lib/firestore'
-import { apiSaveBounty, apiGetCategories, type ApiCategory } from '@/lib/api'
+import { apiSaveBounty, apiSyncBountyOnchain, apiGetCategories, type ApiCategory } from '@/lib/api'
 import { ImageUpload } from '@/components/ui/ImageUpload'
 import { NetworkGuard } from '@/components/ui/NetworkGuard'
 import { ConnectKitButton } from 'connectkit'
@@ -206,6 +206,9 @@ export function CreateBounty() {
         txHash: createHash,
       }).catch((e) => console.warn('[CreateBounty] PostgreSQL save warning:', e))
 
+      // Trigger immediate onchain sync in backend
+      void apiSyncBountyOnchain(id)
+
       // 2. Persist to Firestore fallback
       await saveBountyMeta(id, {
         creatorUid: user?.uid ?? 'anonymous',
@@ -305,6 +308,10 @@ export function CreateBounty() {
         onSuccess: (hash) => {
           toast.success('Bounty funded! Directing to details…')
           setStep('done')
+          if (pendingBountyId) {
+            void apiSyncBountyOnchain(pendingBountyId)
+            void persistMetadata(pendingBountyId)
+          }
           if (address) {
             void logActivity({
               bountyId: pendingBountyId,
@@ -322,6 +329,10 @@ export function CreateBounty() {
 
   useEffect(() => {
     if (fundSuccess && step !== 'done') {
+      if (pendingBountyId) {
+        void apiSyncBountyOnchain(pendingBountyId)
+        void persistMetadata(pendingBountyId)
+      }
       setTimeout(() => {
         void navigate(pendingBountyId ? `/bounty/${pendingBountyId}` : '/explore')
       }, 1500)

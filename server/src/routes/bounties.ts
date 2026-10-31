@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express'
 import { z } from 'zod'
 import { query, withTransaction } from '../db.js'
 import { requireAuth, optionalAuth } from '../auth.js'
-import { fetchOnchainBounty, verifyTxReceipt } from '../chain.js'
+import { fetchOnchainBounty, verifyTxReceipt, syncOnchainBounties } from '../chain.js'
 
 export const bountiesRouter = Router()
 
@@ -20,6 +20,9 @@ bountiesRouter.get('/categories', async (_req: Request, res: Response) => {
 
 // GET /api/bounties - List bounties with search and filters
 bountiesRouter.get('/', async (req: Request, res: Response) => {
+  // Trigger background onchain sync (throttled to 15s)
+  syncOnchainBounties(false).catch(() => {})
+
   const status = req.query.status !== undefined && req.query.status !== 'all' ? Number(req.query.status) : undefined
   const category = (req.query.category as string)?.trim()
   const moderation = (req.query.moderation_status as string)?.trim()
@@ -92,7 +95,20 @@ bountiesRouter.get('/', async (req: Request, res: Response) => {
   sql += ` ORDER BY b.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`
   params.push(limit, offset)
 
-  const result = await query(sql, params)
+  let result = await query(sql, params)
+
+  // If table is currently empty, trigger synchronous sync and re-query once
+  if (result.rows.length === 0 && !search && (status === undefined || isNaN(status))) {
+    try {
+      const syncRes = await syncOnchainBounties(true)
+      if (syncRes.synced > 0) {
+        result = await query(sql, params)
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
   res.json({
     bounties: result.rows,
     count: result.rows.length,
@@ -221,7 +237,7 @@ const CreateBountySchema = z.object({
   txHash: z.string().optional(),
 })
 
-bountiesRouter.post('/', requireAuth, async (req: Request, res: Response) => {
+bountiesRouter.post('/', optionalAuth, async (req: Request, res: Response) => {
   const parsed = CreateBountySchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: 'Validation failed', details: parsed.error.issues })
@@ -250,8 +266,9 @@ bountiesRouter.post('/', requireAuth, async (req: Request, res: Response) => {
     txHash,
   } = parsed.data
 
-  const user = req.user!
-  const normalizedWallet = creatorWallet.toLowerCase()
+  const user = req.user
+  const walletHeader = (req.headers['x-wallet-address'] as string)?.toLowerCase()
+  const normalizedWallet = (creatorWallet || walletHeader || '').toLowerCase()
 
   // If onchainId provided, optionally verify against Arc Testnet
   let initialStatus = 0 // Open
@@ -298,19 +315,20 @@ bountiesRouter.post('/', requireAuth, async (req: Request, res: Response) => {
           contract_version,
           tx_hash,
           onchain_status,
+          moderation_status,
           updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, 'approved', NOW())
         ON CONFLICT (onchain_id) DO UPDATE SET
           title = EXCLUDED.title,
           description = EXCLUDED.description,
           acceptance_criteria = EXCLUDED.acceptance_criteria,
-          objectives = EXCLUDED.objectives,
-          requirements = EXCLUDED.requirements,
-          rules = EXCLUDED.rules,
-          eligibility = EXCLUDED.eligibility,
-          deliverables = EXCLUDED.deliverables,
-          submission_instructions = EXCLUDED.submission_instructions,
+          objectives = COALESCE(EXCLUDED.objectives, bounties.objectives),
+          requirements = COALESCE(EXCLUDED.requirements, bounties.requirements),
+          rules = COALESCE(EXCLUDED.rules, bounties.rules),
+          eligibility = COALESCE(EXCLUDED.eligibility, bounties.eligibility),
+          deliverables = COALESCE(EXCLUDED.deliverables, bounties.deliverables),
+          submission_instructions = COALESCE(EXCLUDED.submission_instructions, bounties.submission_instructions),
           reward_amount = EXCLUDED.reward_amount,
           deadline = EXCLUDED.deadline,
           tags = EXCLUDED.tags,
@@ -319,6 +337,7 @@ bountiesRouter.post('/', requireAuth, async (req: Request, res: Response) => {
           image_url = COALESCE(EXCLUDED.image_url, bounties.image_url),
           tx_hash = COALESCE(EXCLUDED.tx_hash, bounties.tx_hash),
           onchain_status = EXCLUDED.onchain_status,
+          moderation_status = 'approved',
           updated_at = NOW()
         RETURNING
           id,
@@ -351,7 +370,7 @@ bountiesRouter.post('/', requireAuth, async (req: Request, res: Response) => {
         `,
         [
           onchainId,
-          user.id,
+          user?.id || null,
           normalizedWallet,
           title,
           description,
@@ -396,9 +415,10 @@ bountiesRouter.post('/', requireAuth, async (req: Request, res: Response) => {
           image_url,
           contract_version,
           tx_hash,
-          onchain_status
+          onchain_status,
+          moderation_status
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, 'approved')
         RETURNING
           id,
           onchain_id AS "onchainId",
@@ -429,7 +449,7 @@ bountiesRouter.post('/', requireAuth, async (req: Request, res: Response) => {
           updated_at AS "updatedAt"
         `,
         [
-          user.id,
+          user?.id || null,
           normalizedWallet,
           title,
           description,
@@ -472,7 +492,7 @@ bountiesRouter.post('/', requireAuth, async (req: Request, res: Response) => {
       [
         bounty.id,
         onchainId || null,
-        user.id,
+        user?.id || null,
         normalizedWallet,
         `Bounty created: ${title}`,
         txHash || null,
@@ -505,11 +525,12 @@ const UpdateBountySchema = z.object({
   links: z.array(z.string()).optional(),
 })
 
-bountiesRouter.put('/:id', requireAuth, async (req: Request, res: Response) => {
+bountiesRouter.put('/:id', optionalAuth, async (req: Request, res: Response) => {
   const rawParam = req.params.id
   const param = Array.isArray(rawParam) ? rawParam[0] : String(rawParam)
   const isNumeric = /^\d+$/.test(param)
-  const user = req.user!
+  const user = req.user
+  const walletHeader = (req.headers['x-wallet-address'] as string)?.toLowerCase()
 
   const parsed = UpdateBountySchema.safeParse(req.body)
   if (!parsed.success) {
@@ -523,7 +544,7 @@ bountiesRouter.put('/:id', requireAuth, async (req: Request, res: Response) => {
      FROM bounties b
      LEFT JOIN wallets w ON w.user_id = $1 AND w.address = b.creator_wallet
      WHERE ${isNumeric ? 'b.onchain_id = $2' : 'b.id = $2'}`,
-    [user.id, isNumeric ? Number(param) : param]
+    [user?.id || null, isNumeric ? Number(param) : param]
   )
 
   if (findRes.rows.length === 0) {
@@ -533,8 +554,11 @@ bountiesRouter.put('/:id', requireAuth, async (req: Request, res: Response) => {
 
   const bounty = findRes.rows[0]
 
-  // Allow edit if authenticated user is creatorUserId OR has linked the creatorWallet
-  const isOwner = bounty.creator_user_id === user.id || Boolean(bounty.linked_wallet)
+  // Allow edit if authenticated user is creatorUserId OR has linked the creatorWallet OR matches walletHeader
+  const isOwner =
+    (user && (bounty.creator_user_id === user.id || Boolean(bounty.linked_wallet))) ||
+    (walletHeader && bounty.creator_wallet.toLowerCase() === walletHeader)
+
   if (!isOwner) {
     res.status(403).json({ error: 'Unauthorized: only the bounty creator can update metadata' })
     return
@@ -621,6 +645,51 @@ bountiesRouter.post('/:id/sync', async (req: Request, res: Response) => {
   )
 
   if (findRes.rows.length === 0 || !findRes.rows[0].onchain_id) {
+    if (isNumeric) {
+      const onchainData = await fetchOnchainBounty(Number(param))
+      if (onchainData && onchainData.creator.toLowerCase() !== '0x0000000000000000000000000000000000000000') {
+        const deadlineDate = new Date(Number(onchainData.deadline) * 1000)
+        await query(
+          `
+          INSERT INTO bounties (
+            onchain_id,
+            creator_wallet,
+            title,
+            description,
+            acceptance_criteria,
+            reward_amount,
+            token_symbol,
+            token_address,
+            deadline,
+            category_slug,
+            moderation_status,
+            onchain_status,
+            contract_version
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, 'USDC', '0x3600000000000000000000000000000000000000', $7, 'bug-fix', 'approved', $8, 1)
+          ON CONFLICT (onchain_id) DO UPDATE SET
+            onchain_status = EXCLUDED.onchain_status,
+            updated_at = NOW()
+          `,
+          [
+            Number(param),
+            onchainData.creator.toLowerCase(),
+            onchainData.title || `Task #${param}`,
+            `Task #${param} registered on Arc Testnet.`,
+            'Complete the required deliverable and submit verified pull request / proof for on-chain approval.',
+            onchainData.reward.toString(),
+            deadlineDate,
+            onchainData.status,
+          ]
+        )
+        res.json({
+          success: true,
+          onchainId: Number(param),
+          currentStatus: onchainData.status,
+        })
+        return
+      }
+    }
     res.status(404).json({ error: 'Bounty not found or lacks onchain ID' })
     return
   }

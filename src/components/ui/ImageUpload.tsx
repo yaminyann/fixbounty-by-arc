@@ -10,7 +10,9 @@ interface ImageUploadProps {
   quality?: number
   label?: string
   helperText?: string
-  aspectRatio?: 'video' | 'square' | 'auto'
+  helpText?: string
+  alt?: string
+  aspectRatio?: 'video' | 'square' | 'auto' | '16/9'
   disabled?: boolean
 }
 
@@ -88,10 +90,17 @@ export function ImageUpload({
   maxDimensions = { width: 1280, height: 800 },
   quality = 0.82,
   label = 'Cover Image',
-  helperText = 'Recommended: 1200×630px. High-res images are automatically converted to optimized WebP.',
+  helperText,
+  helpText,
+  alt = 'Uploaded preview',
   aspectRatio = 'video',
   disabled = false,
 }: ImageUploadProps) {
+  const displayHelper =
+    helpText ||
+    helperText ||
+    'Recommended: 1200×630px. High-res images are automatically converted to optimized WebP.'
+  const normalizedAspect = aspectRatio === '16/9' ? 'video' : aspectRatio
   const [isDragging, setIsDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState<number>(0)
@@ -180,9 +189,9 @@ export function ImageUpload({
   }
 
   const aspectClass =
-    aspectRatio === 'video'
+    normalizedAspect === 'video'
       ? 'aspect-[16/9]'
-      : aspectRatio === 'square'
+      : normalizedAspect === 'square'
       ? 'aspect-square max-w-[200px]'
       : 'min-h-[160px]'
 
@@ -296,9 +305,9 @@ export function ImageUpload({
         </div>
       )}
 
-      {helperText && (
+      {displayHelper && (
         <p className="text-[11px] text-gray-500 leading-normal">
-          {helperText}
+          {displayHelper}
         </p>
       )}
     </div>

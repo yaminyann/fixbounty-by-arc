@@ -7,9 +7,13 @@ import { auth } from '@/firebase'
 
 const API_BASE = '/api'
 
-async function getAuthHeaders(): Promise<Record<string, string>> {
+async function getAuthHeaders(walletAddress?: string): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+  }
+
+  if (walletAddress) {
+    headers['x-wallet-address'] = walletAddress.toLowerCase()
   }
 
   try {
@@ -283,7 +287,7 @@ export async function apiSaveBounty(data: {
   contractVersion?: number
   txHash?: string
 }): Promise<ApiBounty> {
-  const headers = await getAuthHeaders()
+  const headers = await getAuthHeaders(data.creatorWallet)
   const res = await fetch(`${API_BASE}/bounties`, {
     method: 'POST',
     headers,
@@ -312,9 +316,10 @@ export async function apiUpdateBounty(
     imageUrl?: string
     tags?: string[]
     links?: string[]
-  }
+  },
+  walletAddress?: string
 ): Promise<ApiBounty> {
-  const headers = await getAuthHeaders()
+  const headers = await getAuthHeaders(walletAddress)
   const res = await fetch(`${API_BASE}/bounties/${id}`, {
     method: 'PUT',
     headers,

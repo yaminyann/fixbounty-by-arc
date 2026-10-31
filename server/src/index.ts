@@ -3,6 +3,7 @@ import cors from 'cors'
 import dotenv from 'dotenv'
 import { testConnection, pool } from './db.js'
 import { runMigrations } from './migrate.js'
+import { syncOnchainBounties } from './chain.js'
 import { authRouter } from './routes/auth.js'
 import { bountiesRouter } from './routes/bounties.js'
 import { submissionsRouter, contributorSubmissionsRouter } from './routes/submissions.js'
@@ -105,12 +106,21 @@ async function bootstrap() {
     const dbReady = await testConnection()
     if (dbReady) {
       await runMigrations()
+      // Initial onchain sync with Arc Testnet
+      syncOnchainBounties(true)
+        .then((res) => console.log(`[TaskFi Server] Onchain sync complete: ${res.synced} updated / ${res.total} total.`))
+        .catch((e) => console.warn('[TaskFi Server] Initial onchain sync warning:', e))
     } else {
       console.warn('[TaskFi Server] Database not reachable at startup. Will retry on request.')
     }
   } catch (err) {
     console.error('[TaskFi Server] Startup migration failed:', err)
   }
+
+  // Set recurring periodic sync (every 45s)
+  setInterval(() => {
+    syncOnchainBounties(false).catch(() => {})
+  }, 45_000)
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[TaskFi Server] Listening on http://0.0.0.0:${PORT}`)

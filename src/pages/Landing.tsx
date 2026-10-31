@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowRight,
@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { apiGetBounties, type ApiBounty } from '@/lib/api'
+import { useBountyCount, useBounties } from '@/hooks/useBounty'
 import { formatUsdcAmount, formatAddress, timeUntil } from '@/lib/bountyTypes'
 import { StatusBadge } from '@/components/ui/StatusBadge'
 import { BOUNTY_BOARD_ADDRESS, ARC_EXPLORER_URL } from '@/lib/contract'
@@ -70,30 +71,91 @@ export function Landing() {
   const [liveBounties, setLiveBounties] = useState<ApiBounty[]>([])
   const [loadingBounties, setLoadingBounties] = useState(true)
 
-  // Fetch real bounties from PostgreSQL
+  // Direct onchain fallback for Arc Testnet
+  const { count: onchainCount, isLoading: countLoading } = useBountyCount()
+  const topIds = useMemo(
+    () => Array.from({ length: Math.min(onchainCount, 6) }, (_, i) => onchainCount - i),
+    [onchainCount]
+  )
+  const { bounties: onchainFallbackList } = useBounties(topIds)
+
+  // Fetch real bounties from PostgreSQL with 8s reactive polling
   useEffect(() => {
     let mounted = true
-    apiGetBounties({ limit: 6 })
-      .then((bounties) => {
-        if (mounted) {
-          // Prioritize funded or open bounties
+
+    const load = async () => {
+      try {
+        const bounties = await apiGetBounties({ limit: 6 })
+        if (mounted && bounties) {
           const sorted = [...bounties].sort((a, b) => {
             if (a.onchainStatus === 1 && b.onchainStatus !== 1) return -1
             if (b.onchainStatus === 1 && a.onchainStatus !== 1) return 1
             return (b.onchainId || 0) - (a.onchainId || 0)
           })
           setLiveBounties(sorted.slice(0, 6))
-          setLoadingBounties(false)
         }
-      })
-      .catch(() => {
+      } catch (err) {
+        console.warn('[Landing] Failed to refresh bounties:', err)
+      } finally {
         if (mounted) setLoadingBounties(false)
-      })
+      }
+    }
+
+    void load()
+    const interval = setInterval(load, 8000)
 
     return () => {
       mounted = false
+      clearInterval(interval)
     }
   }, [])
+
+  // Seamlessly merge DB rich data with onchain fallback
+  const displayBounties = useMemo(() => {
+    const dbMap = new Map<number, ApiBounty>()
+    for (const b of liveBounties) {
+      if (b.onchainId) dbMap.set(b.onchainId, b)
+    }
+
+    const merged: {
+      id: string
+      onchainId?: number | null
+      creatorWallet: string
+      title: string
+      description: string
+      rewardAmount: string
+      onchainStatus: number
+      deadline: string
+      tags: string[]
+      imageUrl?: string | null
+    }[] = [...liveBounties]
+
+    for (const oc of onchainFallbackList) {
+      if (!dbMap.has(oc.id)) {
+        merged.push({
+          id: `onchain-${oc.id}`,
+          onchainId: oc.id,
+          creatorWallet: oc.creator,
+          title: oc.title,
+          description: `Active task #${oc.id} registered on Arc Testnet.`,
+          rewardAmount: oc.reward.toString(),
+          onchainStatus: oc.status,
+          deadline: new Date(Number(oc.deadline) * 1000).toISOString(),
+          tags: ['arc', 'task'],
+          imageUrl: null,
+        })
+      }
+    }
+
+    // Sort: funded (1) or approved (2) first, then highest onchainId
+    return merged.sort((a, b) => {
+      if (a.onchainStatus === 1 && b.onchainStatus !== 1) return -1
+      if (b.onchainStatus === 1 && a.onchainStatus !== 1) return 1
+      return (b.onchainId || 0) - (a.onchainId || 0)
+    }).slice(0, 6)
+  }, [liveBounties, onchainFallbackList])
+
+  const isActuallyLoading = loadingBounties && displayBounties.length === 0 && countLoading
 
   return (
     <div className="space-y-20 md:space-y-24">
@@ -253,7 +315,7 @@ export function Landing() {
         </div>
 
         {/* Loading Skeletons */}
-        {loadingBounties ? (
+        {isActuallyLoading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {[1, 2, 3].map((i) => (
               <div
@@ -270,9 +332,9 @@ export function Landing() {
               </div>
             ))}
           </div>
-        ) : liveBounties.length > 0 ? (
+        ) : displayBounties.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {liveBounties.map((b) => (
+            {displayBounties.map((b) => (
               <Link
                 key={b.id}
                 to={`/bounty/${b.onchainId || b.id}`}

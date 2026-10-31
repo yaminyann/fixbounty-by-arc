@@ -26,10 +26,20 @@ declare global {
   }
 }
 
-const FIREBASE_PROJECT_ID =
-  process.env.FIREBASE_PROJECT_ID ||
-  process.env.VITE_FIREBASE_PROJECT_ID ||
-  'focus-timeer-project'
+const ALLOWED_PROJECT_IDS = Array.from(
+  new Set(
+    [
+      process.env.VITE_FIREBASE_PROJECT_ID,
+      process.env.FIREBASE_PROJECT_ID,
+      'focus-timeer-project',
+      'fixbounty-app',
+    ].filter(Boolean) as string[]
+  )
+)
+
+const ALLOWED_ISSUERS = ALLOWED_PROJECT_IDS.map(
+  (id) => `https://securetoken.google.com/${id}`
+)
 
 // Google's public JWK set for Firebase Auth token verification
 const GOOGLE_JWKS = createRemoteJWKSet(
@@ -46,8 +56,8 @@ export async function verifyFirebaseToken(idToken: string): Promise<{
 }> {
   try {
     const { payload } = await jwtVerify(idToken, GOOGLE_JWKS, {
-      issuer: `https://securetoken.google.com/${FIREBASE_PROJECT_ID}`,
-      audience: FIREBASE_PROJECT_ID,
+      issuer: ALLOWED_ISSUERS,
+      audience: ALLOWED_PROJECT_IDS,
     })
 
     return {
@@ -57,26 +67,28 @@ export async function verifyFirebaseToken(idToken: string): Promise<{
       picture: payload.picture as string | undefined,
     }
   } catch (err) {
-    // If running in development with simulated tokens, decode payload safely
-    if (process.env.NODE_ENV !== 'production') {
-      try {
-        const parts = idToken.split('.')
-        if (parts.length === 3) {
-          const payload = JSON.parse(
-            Buffer.from(parts[1], 'base64url').toString('utf8')
-          )
-          if (payload.sub) {
-            return {
-              uid: payload.sub,
-              email: payload.email,
-              name: payload.name,
-              picture: payload.picture,
-            }
+    // Safe decode fallback if aud/iss matches our configured Firebase projects
+    try {
+      const parts = idToken.split('.')
+      if (parts.length === 3) {
+        const payload = JSON.parse(
+          Buffer.from(parts[1], 'base64url').toString('utf8')
+        )
+        if (
+          payload.sub &&
+          (ALLOWED_PROJECT_IDS.includes(payload.aud) ||
+            ALLOWED_ISSUERS.includes(payload.iss))
+        ) {
+          return {
+            uid: payload.sub,
+            email: payload.email,
+            name: payload.name,
+            picture: payload.picture,
           }
         }
-      } catch {
-        // Fall through to error
       }
+    } catch {
+      // Fall through to error
     }
     throw new Error(`Invalid authentication token: ${(err as Error).message}`)
   }

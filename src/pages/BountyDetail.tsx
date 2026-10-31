@@ -187,17 +187,21 @@ export function BountyDetail() {
       const tagsArray = metaForm.tags.split(',').map((t) => t.trim()).filter(Boolean)
 
       // 1. Persist directly to PostgreSQL
-      await apiUpdateBounty(bountyId, {
-        description: metaForm.description,
-        acceptanceCriteria: metaForm.acceptanceCriteria,
-        objectives: metaForm.objectives || undefined,
-        requirements: metaForm.requirements || undefined,
-        rules: metaForm.rules || undefined,
-        eligibility: metaForm.eligibility || undefined,
-        deliverables: metaForm.deliverables || undefined,
-        submissionInstructions: metaForm.submissionInstructions || undefined,
-        tags: tagsArray,
-      }).catch((e) => console.warn('[BountyDetail] PostgreSQL update error:', e))
+      await apiUpdateBounty(
+        bountyId,
+        {
+          description: metaForm.description,
+          acceptanceCriteria: metaForm.acceptanceCriteria,
+          objectives: metaForm.objectives || undefined,
+          requirements: metaForm.requirements || undefined,
+          rules: metaForm.rules || undefined,
+          eligibility: metaForm.eligibility || undefined,
+          deliverables: metaForm.deliverables || undefined,
+          submissionInstructions: metaForm.submissionInstructions || undefined,
+          tags: tagsArray,
+        },
+        address
+      ).catch((e) => console.warn('[BountyDetail] PostgreSQL update error:', e))
 
       // 2. Persist to Firestore & local storage
       await saveBountyMeta(bountyId, {
