@@ -1,142 +1,198 @@
 import { Link } from 'react-router-dom'
-import { ArrowRight, Shield, Zap, Globe, CheckCircle2, Bug } from 'lucide-react'
+import { ButtonLink } from '@/components/ui/Button'
+import { EmptyState, ErrorState, Skeleton } from '@/components/ui/Feedback'
+import { PrizeCalculator } from '@/components/bounty/PrizeCalculator'
+import { PrizeLadder } from '@/components/bounty/PrizeLadder'
+import { StatusBadge } from '@/components/bounty/StatusBadge'
+import { useBounties, usePublicStats } from '@/lib/api/queries'
+import { formatUsdc } from '@/lib/money'
+import { timeLeft } from '@/lib/time'
 
-const FEATURES = [
-  {
-    icon: Globe,
-    title: 'Public & Verifiable',
-    desc: 'Every bounty, funding event, approval, and payout is recorded on Arc Testnet. Anyone can verify the full history.',
-  },
-  {
-    icon: Shield,
-    title: 'Smart Contract Enforced',
-    desc: 'Reward funds are held by the contract, not a third party. Creators cannot redirect funds after approving a contributor.',
-  },
-  {
-    icon: Zap,
-    title: 'USDC Rewards',
-    desc: 'Rewards are denominated in USDC on Arc — stable value, no gas token confusion, fast settlement.',
-  },
-]
+function OpenNow() {
+  const query = useBounties({ open: true, sort: 'newest', limit: 4 })
+  const items = query.data?.items ?? []
 
-const STEPS = [
-  { num: '01', title: 'Post a Bounty', desc: 'Describe the task, set a USDC reward, and specify a deadline and acceptance criteria.' },
-  { num: '02', title: 'Fund It', desc: 'Lock the USDC reward into the smart contract. Contributors can see it is real.' },
-  { num: '03', title: 'Review Submissions', desc: 'Contributors submit links and hashes of their work. Pick the one that meets your criteria.' },
-  { num: '04', title: 'Payout', desc: 'Approve a submission and the contributor claims their USDC directly from the contract.' },
-]
+  return (
+    <section aria-labelledby="open-now" className="rounded-md border-2 border-ink bg-white shadow-hard">
+      <div className="flex items-baseline justify-between border-b-2 border-ink px-5 py-3">
+        <h2 id="open-now" className="font-display text-lg font-bold">
+          Open for work right now
+        </h2>
+        <Link to="/explore" className="text-sm font-bold underline underline-offset-2">
+          See all
+        </Link>
+      </div>
 
-export function Landing() {
+      {query.isPending ? (
+        <ul aria-hidden className="divide-y divide-line">
+          {[0, 1, 2].map((i) => (
+            <li key={i} className="space-y-2 px-5 py-4">
+              <Skeleton className="h-5 w-3/4" />
+              <Skeleton className="h-4 w-1/3" />
+            </li>
+          ))}
+        </ul>
+      ) : query.isError ? (
+        <div className="p-4">
+          <ErrorState title="Bounties did not load" message="The list is temporarily unavailable." onRetry={() => void query.refetch()} />
+        </div>
+      ) : items.length === 0 ? (
+        <div className="p-4">
+          <EmptyState
+            title="No bounties are open yet"
+            action={
+              <ButtonLink to="/create" variant="primary">
+                Post the first bounty
+              </ButtonLink>
+            }
+          >
+            New bounties appear here once an admin has reviewed them.
+          </EmptyState>
+        </div>
+      ) : (
+        <ul className="divide-y divide-line">
+          {items.map((b) => (
+            <li key={b.id}>
+              <Link to={`/bounty/${b.onchainId}`} className="grid gap-3 px-5 py-4 hover:bg-signal-soft/50 sm:grid-cols-[1fr_auto]">
+                <div className="min-w-0 space-y-1.5">
+                  <StatusBadge status={b.status} deadline={b.deadline} />
+                  <p className="line-clamp-2 font-display font-bold leading-snug">{b.title}</p>
+                  <p className="flex flex-wrap gap-x-3 text-xs text-mute">
+                    <span>{timeLeft(b.deadline)}</span>
+                    <span>
+                      {b.submissionCount} {b.submissionCount === 1 ? 'submission' : 'submissions'}
+                    </span>
+                  </p>
+                </div>
+                <div className="flex items-start gap-4 sm:flex-col sm:items-end">
+                  <p className="num font-display text-xl font-bold">{formatUsdc(b.rewardAmount)} USDC</p>
+                  <PrizeLadder shares={b.prizeShares} compact />
+                </div>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function Totals() {
+  const stats = usePublicStats()
+  const s = stats.data
+  if (!s) return null
+  const cells = [
+    s.liveBounties > 0 && { label: 'Bounties live', value: String(s.liveBounties) },
+    BigInt(s.totalPosted) > 0n && { label: 'USDC posted in prizes', value: formatUsdc(s.totalPosted) },
+    BigInt(s.totalPaidOut) > 0n && { label: 'USDC paid to winners', value: formatUsdc(s.totalPaidOut) },
+    s.builders > 0 && { label: 'Contributors who submitted', value: String(s.builders) },
+  ].filter(Boolean) as { label: string; value: string }[]
+  if (cells.length === 0) return null
+
+  return (
+    <dl className="mt-12 grid grid-cols-2 gap-px overflow-hidden rounded-md border border-line bg-line md:grid-cols-4">
+      {cells.map((c) => (
+        <div key={c.label} className="bg-white px-5 py-4">
+          <dd className="num font-display text-2xl font-bold">{c.value}</dd>
+          <dt className="text-xs text-mute">{c.label}</dt>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+export default function Landing() {
   return (
     <div className="space-y-24">
-      {/* Hero */}
-      <section className="pt-8 pb-4">
-        <div className="max-w-2xl">
-          <div className="inline-flex items-center gap-2 border-2 border-black bg-yellow-300 px-3 py-1 text-xs font-bold tracking-widest mb-6">
-            <span className="w-2 h-2 bg-black rounded-full animate-pulse" />
-            LIVE ON ARC TESTNET
-          </div>
-          <h1 className="font-display font-bold text-4xl md:text-5xl leading-tight tracking-tight mb-4 text-balance">
-            Coordinate open-source work with verifiable USDC rewards.
+      <section className="grid gap-12 lg:grid-cols-[1.1fr_1fr] lg:items-start">
+        <div className="space-y-6 pt-2">
+          <h1 className="font-display text-4xl font-bold leading-[1.05] sm:text-5xl lg:text-6xl">
+            Fix open-source bugs. Get paid in USDC.
           </h1>
-          <p className="text-lg text-gray-600 mb-8 text-pretty max-w-xl">
-            FixBounty lets open-source maintainers post bug fix bounties and pay contributors directly via smart contract — no middleman, no trust required.
+          <p className="max-w-xl text-lg text-mute">
+            A maintainer locks the prize in a smart contract. Contributors submit fixes. The maintainer picks one winner or several, and each winner claims their share straight from the contract.
           </p>
-          <div className="flex flex-wrap gap-3">
-            <Link
-              to="/explore"
-              className="inline-flex items-center gap-2 bg-black text-white border-2 border-black px-6 py-3 font-bold text-sm hover:bg-yellow-300 hover:text-black transition-all shadow-[4px_4px_0px_black]"
-            >
-              Browse Bounties
-              <ArrowRight size={16} />
-            </Link>
-            <Link
-              to="/create"
-              className="inline-flex items-center gap-2 bg-white border-2 border-black px-6 py-3 font-bold text-sm hover:bg-yellow-300 transition-all shadow-[4px_4px_0px_black]"
-            >
-              Post a Bounty
-            </Link>
+          <div className="flex flex-wrap gap-3 pt-2">
+            <ButtonLink to="/explore" variant="primary" size="lg">
+              Browse open bounties
+            </ButtonLink>
+            <ButtonLink to="/create" size="lg">
+              Post a bounty
+            </ButtonLink>
           </div>
+          <p className="max-w-md text-sm text-mute">
+            Posting adds a 0.5% fee on top of the prize. Winners pay 5% of what they receive. Nothing else.
+          </p>
+        </div>
+        <OpenNow />
+      </section>
+
+      <Totals />
+
+      <section aria-labelledby="calc" className="grid gap-10 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.4fr)]">
+        <div className="space-y-4">
+          <h2 id="calc" className="font-display text-2xl font-bold sm:text-4xl">
+            Know what a payout is before you post
+          </h2>
+          <p className="text-mute">
+            Prizes can go to one person, an equal split, or ranked places like 50 / 30 / 20. Every deduction is a fixed rate in the contract, so the numbers here are the numbers on-chain.
+          </p>
+          <p className="text-mute">
+            If you pick fewer winners than places, the unused prizes return to you in the same transaction.
+          </p>
+        </div>
+        <div className="rounded-md border-2 border-ink bg-white p-5 sm:p-6">
+          <PrizeCalculator />
         </div>
       </section>
 
-      {/* Features */}
-      <section>
-        <h2 className="font-display font-bold text-2xl mb-8 tracking-tight">Why onchain bounties?</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {FEATURES.map(({ icon: Icon, title, desc }) => (
-            <div key={title} className="border-2 border-black p-6 bg-white shadow-[4px_4px_0px_black]">
-              <div className="w-10 h-10 border-2 border-black bg-yellow-300 flex items-center justify-center mb-4">
-                <Icon size={20} />
-              </div>
-              <h3 className="font-bold text-base mb-2">{title}</h3>
-              <p className="text-sm text-gray-600 leading-relaxed">{desc}</p>
-            </div>
-          ))}
+      <section aria-labelledby="flow" className="grid gap-x-16 gap-y-10 md:grid-cols-[3fr_2fr]">
+        <div>
+          <h2 id="flow" className="mb-5 font-display text-2xl font-bold">
+            If you maintain a project
+          </h2>
+          <ol className="space-y-4">
+            {[
+              ['Describe the bug and how a fix will be judged.', 'The text is hashed and the hash goes on-chain, so it cannot be changed after contributors start work.'],
+              ['Choose the deadline and how the prize is shared.', 'One winner, an equal split, or ranked places.'],
+              ['Fund it.', 'The prize plus the 0.5% fee leaves your wallet. An admin reviews the bounty and publishes it.'],
+              ['Pick the winners after the deadline, or earlier.', 'Winners claim within 7 days. Anything unclaimed can be reclaimed after that.'],
+            ].map(([head, tail], i) => (
+              <li key={head} className="grid grid-cols-[2rem_1fr] gap-3">
+                <span className="num font-display text-xl font-bold text-mute">{i + 1}</span>
+                <p>
+                  <span className="font-bold">{head}</span> <span className="text-mute">{tail}</span>
+                </p>
+              </li>
+            ))}
+          </ol>
+        </div>
+        <div>
+          <h2 className="mb-5 font-display text-2xl font-bold">If you want to earn</h2>
+          <ol className="space-y-4">
+            {[
+              ['Find a funded bounty.', 'Every listed bounty has its prize already locked.'],
+              ['Submit before the deadline.', 'One submission per bounty, recorded on-chain.'],
+              ['Claim if you win.', 'Your share arrives in your wallet minus the 5% fee.'],
+            ].map(([head, tail], i) => (
+              <li key={head} className="grid grid-cols-[2rem_1fr] gap-3">
+                <span className="num font-display text-xl font-bold text-mute">{i + 1}</span>
+                <p>
+                  <span className="font-bold">{head}</span> <span className="text-mute">{tail}</span>
+                </p>
+              </li>
+            ))}
+          </ol>
         </div>
       </section>
 
-      {/* How it works */}
-      <section>
-        <h2 className="font-display font-bold text-2xl mb-8 tracking-tight">How it works</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-0 border-2 border-black">
-          {STEPS.map(({ num, title, desc }, i) => (
-            <div
-              key={num}
-              className={`p-6 bg-white ${i < STEPS.length - 1 ? 'border-b-2 lg:border-b-0 lg:border-r-2 border-black' : ''}`}
-            >
-              <div className="font-display font-bold text-4xl text-gray-200 mb-3 tabular-nums">{num}</div>
-              <h3 className="font-bold text-base mb-2">{title}</h3>
-              <p className="text-sm text-gray-600 leading-relaxed">{desc}</p>
-            </div>
-          ))}
+      <section className="rounded-md border-2 border-ink bg-signal px-6 py-10 sm:px-10">
+        <div className="flex flex-wrap items-center justify-between gap-6">
+          <p className="max-w-xl font-display text-2xl font-bold sm:text-4xl">An issue that has sat in your tracker for months is worth a prize.</p>
+          <ButtonLink to="/create" variant="dark" size="lg">
+            Post a bounty
+          </ButtonLink>
         </div>
-      </section>
-
-      {/* Enterprise Security & Onchain Escrow Architecture */}
-      <section className="border-2 border-black bg-black text-white p-8 shadow-[8px_8px_0px_#EAB308]">
-        <div className="flex items-start gap-4 mb-6">
-          <Shield size={32} className="shrink-0 mt-1 text-yellow-300" />
-          <div>
-            <div className="inline-block bg-yellow-300 text-black text-[11px] font-black uppercase tracking-wider px-2 py-0.5 mb-2 border border-black">
-              Enterprise Security Architecture
-            </div>
-            <h2 className="font-display font-bold text-2xl tracking-tight mb-2">
-              Autonomous Onchain Escrow & Guaranteed Settlements
-            </h2>
-            <p className="text-gray-300 text-sm leading-relaxed max-w-3xl">
-              FixBounty eliminates counterparty risk by locking USDC rewards directly into audited smart contracts on Arc before any work commences. Maintainers deposit verified funds into decentralized escrow, and contributors are programmatically guaranteed payment upon code review approval. No centralized custodians, no payment disputes, and 100% verifiable onchain transparency.
-            </p>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3.5 mt-6 pt-6 border-t border-gray-800">
-          {[
-            'Non-Custodial USDC Escrow',
-            'Zero Intermediary Counterparty Risk',
-            'Autonomous Smart Contract Settlement',
-            'Audited Reentrancy & SafeERC20 Protection',
-            'Programmatic Deadline & Refund Safeguards',
-            'Sub-Second Confirmation on Arc Testnet',
-          ].map((item) => (
-            <div key={item} className="flex items-center gap-2 text-xs sm:text-sm font-medium text-gray-200">
-              <CheckCircle2 size={16} className="text-yellow-300 shrink-0" />
-              <span>{item}</span>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* CTA */}
-      <section className="text-center pb-8">
-        <h2 className="font-display font-bold text-2xl mb-3">Ready to get started?</h2>
-        <p className="text-gray-600 mb-6 text-sm">Connect your wallet and get test USDC from the faucet in the sidebar.</p>
-        <Link
-          to="/explore"
-          className="inline-flex items-center gap-2 bg-yellow-300 border-2 border-black px-8 py-3 font-bold text-sm hover:bg-black hover:text-white transition-all shadow-[4px_4px_0px_black]"
-        >
-          Explore Bounties
-          <ArrowRight size={16} />
-        </Link>
       </section>
     </div>
   )

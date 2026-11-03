@@ -1,337 +1,376 @@
-import { Router, type Request, type Response, type NextFunction } from 'express'
-import { query } from '../db.js'
-import { optionalAuth } from '../auth.js'
+import { Router, type Request, type Response } from 'express'
+import { z } from 'zod'
+import { adminEmail, requireAdmin, requireAuth } from '../auth.js'
+import { config } from '../config.js'
+import { readTreasuryBalance, publicClient } from '../chain.js'
+import { pool, query } from '../db.js'
+import { HttpError, clampInt, parse, parseOnchainId, queryString, route } from '../lib/http.js'
+import { TtlCache } from '../lib/limits.js'
+import { indexerStatus } from '../services/indexer.js'
+import { BOUNTY_LIST_COLUMNS, toTsQuery } from '../services/projections.js'
 
 export const adminRouter = Router()
 
-// Read admin credentials from environment with secure defaults
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || process.env.ADMIN_SECRET || 'fixbounty_admin_2026_arc'
-const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || process.env.VITE_ADMIN_EMAILS || 'yaminv75@gmail.com,admin@fixbounty.io')
-  .toLowerCase()
-  .split(',')
-  .map((e) => e.trim())
-  .filter(Boolean)
-
-// Middleware: Verify Admin Access via Passkey Header OR Whitelisted Google Email
-function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  const adminKey = req.headers['x-admin-key'] as string | undefined
-
-  // 1. Check Passkey header
-  if (adminKey && (adminKey === ADMIN_PASSWORD || adminKey === process.env.ADMIN_SECRET)) {
-    return next()
-  }
-
-  // 2. Check Whitelisted Authenticated Google Email
-  if (req.user?.email && ADMIN_EMAILS.includes(req.user.email.toLowerCase())) {
-    return next()
-  }
-
-  res.status(401).json({
-    error: 'Unauthorized. Admin credentials or authorized admin email required.',
-  })
-}
-
-// POST /api/admin/verify - Verify admin credentials
-adminRouter.post('/verify', optionalAuth, (req: Request, res: Response) => {
-  const { password } = req.body || {}
-  const adminKey = (req.headers['x-admin-key'] as string) || password
-
-  if (adminKey && (adminKey === ADMIN_PASSWORD || adminKey === process.env.ADMIN_SECRET)) {
-    res.json({
-      valid: true,
-      authMethod: 'passkey',
-      message: 'Admin authorization verified.',
-    })
-    return
-  }
-
-  if (req.user?.email && ADMIN_EMAILS.includes(req.user.email.toLowerCase())) {
-    res.json({
-      valid: true,
-      authMethod: 'google_oauth',
-      email: req.user.email,
-      message: 'Admin authorization granted via whitelisted Google profile.',
-    })
-    return
-  }
-
-  res.status(403).json({
-    valid: false,
-    error: 'Invalid admin credentials.',
-  })
+// Admin access is the verified Google account on the server-side allowlist (ADMIN_EMAILS).
+adminRouter.use(requireAuth, requireAdmin)
+adminRouter.use((_req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store')
+  next()
 })
 
-// GET /api/admin/stats - Global platform analytics & KPI summary
-adminRouter.get('/stats', optionalAuth, requireAdmin, async (_req: Request, res: Response) => {
-  try {
-    // 1. Bounty stats & status distribution
-    const bountyStatsRes = await query<{
-      total_bounties: number
-      total_rewards: string
-      open_count: number
-      funded_count: number
-      approved_count: number
-      claimed_count: number
-      refunded_count: number
-      cancelled_count: number
-    }>(`
-      SELECT
-        COUNT(*)::int AS total_bounties,
-        COALESCE(SUM(reward_amount), 0)::text AS total_rewards,
-        COUNT(*) FILTER (WHERE onchain_status = 0)::int AS open_count,
-        COUNT(*) FILTER (WHERE onchain_status = 1)::int AS funded_count,
-        COUNT(*) FILTER (WHERE onchain_status = 2)::int AS approved_count,
-        COUNT(*) FILTER (WHERE onchain_status = 3)::int AS claimed_count,
-        COUNT(*) FILTER (WHERE onchain_status = 4)::int AS refunded_count,
-        COUNT(*) FILTER (WHERE onchain_status = 5)::int AS cancelled_count
-      FROM bounties
-    `)
+adminRouter.get(
+  '/me',
+  route((req: Request, res: Response) => {
+    res.json({ email: req.user!.email, displayName: req.user!.displayName })
+  }),
+)
 
-    // 2. Submissions stats & status distribution
-    const subStatsRes = await query<{
-      total_submissions: number
-      pending_count: number
-      approved_count: number
-      rejected_count: number
-    }>(`
-      SELECT
-        COUNT(*)::int AS total_submissions,
-        COUNT(*) FILTER (WHERE status = 'pending')::int AS pending_count,
-        COUNT(*) FILTER (WHERE status = 'approved')::int AS approved_count,
-        COUNT(*) FILTER (WHERE status = 'rejected')::int AS rejected_count
-      FROM submissions
-    `)
+// ---------------------------------------------------------------------------
+// Overview
+// ---------------------------------------------------------------------------
 
-    // 3. User & wallet counts
-    const userStatsRes = await query<{
-      total_users: number
-      total_creators: number
-      total_submitters: number
-    }>(`
-      SELECT
-        (SELECT COUNT(*)::int FROM users) AS total_users,
-        (SELECT COUNT(DISTINCT creator_wallet)::int FROM bounties WHERE creator_wallet IS NOT NULL) AS total_creators,
-        (SELECT COUNT(DISTINCT submitter_wallet)::int FROM submissions WHERE submitter_wallet IS NOT NULL) AS total_submitters
-    `)
+const treasuryCache = new TtlCache<string>(30_000, 1)
+const overviewCache = new TtlCache<Record<string, unknown>>(10_000, 1)
 
-    const b = bountyStatsRes.rows[0] || {
-      total_bounties: 0,
-      total_rewards: '0',
-      open_count: 0,
-      funded_count: 0,
-      approved_count: 0,
-      claimed_count: 0,
-      refunded_count: 0,
-      cancelled_count: 0,
-    }
+adminRouter.get(
+  '/overview',
+  route(async (_req: Request, res: Response) => {
+    const data = await overviewCache.get('overview', async () => {
+      const [moderation, chainStatus, people, work, revenue, byKind, revenueDaily, bountiesDaily] = await Promise.all([
+        query<{ pending: number; approved: number; rejected: number; unpublished: number }>(
+          `SELECT
+             COUNT(*) FILTER (WHERE metadata_verified AND moderation_status = 'pending')::int AS pending,
+             COUNT(*) FILTER (WHERE moderation_status = 'approved')::int AS approved,
+             COUNT(*) FILTER (WHERE moderation_status = 'rejected')::int AS rejected,
+             COUNT(*) FILTER (WHERE NOT metadata_verified)::int AS unpublished
+           FROM bounties`,
+        ),
+        query<{ status: number; count: number; reward: string }>(
+          `SELECT onchain_status AS status, COUNT(*)::int AS count, COALESCE(SUM(reward_amount), 0)::text AS reward
+             FROM bounties GROUP BY onchain_status ORDER BY onchain_status`,
+        ),
+        query<{ users: number; new7d: number; wallets: number }>(
+          `SELECT (SELECT COUNT(*)::int FROM users) AS users,
+                  (SELECT COUNT(*)::int FROM users WHERE created_at > NOW() - INTERVAL '7 days') AS new7d,
+                  (SELECT COUNT(*)::int FROM wallets WHERE verified) AS wallets`,
+        ),
+        query<{ submissions: number; winners: number }>(
+          `SELECT COUNT(*)::int AS submissions, COUNT(*) FILTER (WHERE position IS NOT NULL)::int AS winners FROM submissions`,
+        ),
+        query<{ total: string; day: string; week: string; month: string }>(
+          `SELECT COALESCE(SUM(amount), 0)::text AS total,
+                  COALESCE(SUM(amount) FILTER (WHERE block_time > NOW() - INTERVAL '1 day'), 0)::text AS day,
+                  COALESCE(SUM(amount) FILTER (WHERE block_time > NOW() - INTERVAL '7 days'), 0)::text AS week,
+                  COALESCE(SUM(amount) FILTER (WHERE block_time > NOW() - INTERVAL '30 days'), 0)::text AS month
+             FROM platform_fees`,
+        ),
+        query<{ kind: number; total: string; count: number }>(
+          `SELECT kind, COALESCE(SUM(amount), 0)::text AS total, COUNT(*)::int AS count FROM platform_fees GROUP BY kind ORDER BY kind`,
+        ),
+        query<{ day: string; amount: string }>(
+          `SELECT to_char(d.day, 'YYYY-MM-DD') AS day, COALESCE(SUM(f.amount), 0)::text AS amount
+             FROM generate_series(date_trunc('day', NOW()) - INTERVAL '13 days', date_trunc('day', NOW()), INTERVAL '1 day') AS d(day)
+             LEFT JOIN platform_fees f ON date_trunc('day', f.block_time) = d.day
+            GROUP BY d.day ORDER BY d.day`,
+        ),
+        query<{ day: string; count: number }>(
+          `SELECT to_char(d.day, 'YYYY-MM-DD') AS day, COUNT(b.id)::int AS count
+             FROM generate_series(date_trunc('day', NOW()) - INTERVAL '13 days', date_trunc('day', NOW()), INTERVAL '1 day') AS d(day)
+             LEFT JOIN bounties b ON date_trunc('day', b.created_at) = d.day
+            GROUP BY d.day ORDER BY d.day`,
+        ),
+      ])
 
-    const s = subStatsRes.rows[0] || {
-      total_submissions: 0,
-      pending_count: 0,
-      approved_count: 0,
-      rejected_count: 0,
-    }
+      let treasuryBalance: string | null = null
+      try {
+        treasuryBalance = await treasuryCache.get('balance', async () => (await readTreasuryBalance()).toString())
+      } catch {
+        treasuryBalance = null
+      }
 
-    const u = userStatsRes.rows[0] || {
-      total_users: 0,
-      total_creators: 0,
-      total_submitters: 0,
-    }
-
-    res.json({
-      success: true,
-      bounties: {
-        total: b.total_bounties,
-        totalRewards: b.total_rewards,
-        open: b.open_count,
-        funded: b.funded_count,
-        approved: b.approved_count,
-        claimed: b.claimed_count,
-        refunded: b.refunded_count,
-        cancelled: b.cancelled_count,
-      },
-      submissions: {
-        total: s.total_submissions,
-        pending: s.pending_count,
-        approved: s.approved_count,
-        rejected: s.rejected_count,
-      },
-      users: {
-        total: u.total_users,
-        uniqueCreators: u.total_creators,
-        uniqueSubmitters: u.total_submitters,
-      },
-      system: {
-        network: 'Arc Testnet (Chain ID 5042002)',
-        contractAddress: process.env.BOUNTY_BOARD_ADDRESS || '0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb',
-        usdcAddress: '0x3600000000000000000000000000000000000000',
-        rpcUrl: process.env.ARC_RPC_URL || 'https://rpc.testnet.arc.io',
-      },
+      return {
+        moderation: moderation.rows[0],
+        chainStatus: chainStatus.rows,
+        people: people.rows[0],
+        work: work.rows[0],
+        revenue: { ...revenue.rows[0], byKind: byKind.rows, treasuryBalance, treasuryAddress: config.chain.treasuryAddress },
+        series: { revenue: revenueDaily.rows, bounties: bountiesDaily.rows },
+      }
     })
-  } catch (err) {
-    console.error('[Admin API] Failed to fetch stats:', err)
-    res.status(500).json({ error: (err as Error).message })
-  }
+    res.json(data)
+  }),
+)
+
+// ---------------------------------------------------------------------------
+// Bounties and moderation
+// ---------------------------------------------------------------------------
+
+adminRouter.get(
+  '/bounties',
+  route(async (req: Request, res: Response) => {
+    const limit = clampInt(req.query.limit, 20, 1, 100)
+    const offset = clampInt(req.query.offset, 0, 0, 100_000)
+    const moderation = queryString(req.query.moderation, 12) ?? 'pending'
+    const status = queryString(req.query.status, 3)
+    const search = queryString(req.query.search, 80)
+
+    const where: string[] = []
+    const params: unknown[] = []
+
+    if (moderation === 'unpublished') {
+      where.push('NOT b.metadata_verified')
+    } else if (moderation !== 'all') {
+      if (!['pending', 'approved', 'rejected'].includes(moderation)) throw new HttpError(400, 'Invalid moderation filter')
+      params.push(moderation)
+      where.push(`b.moderation_status = $${params.length} AND b.metadata_verified`)
+    }
+    if (status !== undefined && /^[0-5]$/.test(status)) {
+      params.push(Number(status))
+      where.push(`b.onchain_status = $${params.length}`)
+    }
+    if (search) {
+      const ts = toTsQuery(search)
+      params.push(`%${search.toLowerCase()}%`)
+      const likeIdx = params.length
+      if (ts) {
+        params.push(ts)
+        where.push(`(b.search_tsv @@ to_tsquery('simple', $${params.length}) OR b.creator_wallet LIKE $${likeIdx} OR LOWER(u.email) LIKE $${likeIdx})`)
+      } else {
+        where.push(`(b.creator_wallet LIKE $${likeIdx} OR LOWER(u.email) LIKE $${likeIdx})`)
+      }
+    }
+    params.push(limit, offset)
+
+    const rows = await query<{ total: string }>(
+      `SELECT ${BOUNTY_LIST_COLUMNS},
+              b.description, b.acceptance_criteria AS "acceptanceCriteria", b.links, b.content_hash AS "contentHash",
+              b.metadata_verified AS "metadataVerified", b.moderation_note AS "moderationNote",
+              b.moderated_by AS "moderatedBy", b.moderated_at AS "moderatedAt", b.tx_hash AS "txHash",
+              u.email AS "creatorEmail", u.display_name AS "creatorName",
+              COUNT(*) OVER()::text AS total
+         FROM bounties b
+         LEFT JOIN users u ON u.id = b.creator_user_id
+        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+        ORDER BY ${moderation === 'pending' ? 'b.created_at ASC' : 'b.created_at DESC'}
+        LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    )
+    const total = rows.rows[0] ? Number(rows.rows[0].total) : 0
+    res.json({ items: rows.rows.map(({ total: _t, ...rest }) => rest), total, limit, offset })
+  }),
+)
+
+const ModerationSchema = z.object({
+  decision: z.enum(['approved', 'rejected', 'pending']),
+  note: z.string().trim().max(500).optional(),
 })
 
-// GET /api/admin/bounties - Paginated bounties across the platform
-adminRouter.get('/bounties', optionalAuth, requireAdmin, async (req: Request, res: Response) => {
-  try {
-    const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100)
-    const offset = Math.max(Number(req.query.offset) || 0, 0)
-    const status = req.query.status !== undefined && req.query.status !== 'all' ? Number(req.query.status) : undefined
-    const search = (req.query.search as string)?.trim()
+adminRouter.post(
+  '/bounties/:id/moderation',
+  route(async (req: Request, res: Response) => {
+    const onchainId = parseOnchainId(req.params.id)
+    const { decision, note } = parse(ModerationSchema, req.body)
+    const contract = config.chain.contractAddress
+    if (!contract) throw new HttpError(503, 'Contract is not configured.')
 
-    const conditions: string[] = []
-    const params: (string | number)[] = []
+    const current = await query<{ id: string; metadata_verified: boolean; onchain_status: number; moderation_status: string }>(
+      'SELECT id, metadata_verified, onchain_status, moderation_status FROM bounties WHERE contract_address = $1 AND onchain_id = $2',
+      [contract, onchainId],
+    )
+    const bounty = current.rows[0]
+    if (!bounty) throw new HttpError(404, 'Bounty not found')
 
-    if (status !== undefined && !isNaN(status)) {
-      params.push(status)
-      conditions.push(`b.onchain_status = $${params.length}`)
+    if (decision === 'approved') {
+      if (!bounty.metadata_verified) throw new HttpError(409, 'The creator has not published a verified description yet.')
+      if (bounty.onchain_status === 0) throw new HttpError(409, 'This bounty is not funded on-chain yet.')
+      if (bounty.onchain_status === 5) throw new HttpError(409, 'This bounty was cancelled.')
     }
+    if (decision === 'rejected' && !note) throw new HttpError(400, 'Add a short reason so the creator knows what to change.')
 
+    const email = adminEmail(req)
+    await query(
+      `UPDATE bounties
+          SET moderation_status = $2, moderated_by = $3, moderated_at = NOW(), moderation_note = $4, updated_at = NOW()
+        WHERE id = $1`,
+      [bounty.id, decision, email, note ?? null],
+    )
+    await query(
+      `INSERT INTO admin_audit_log (admin_email, action, target_type, target_id, detail)
+       VALUES ($1, $2, 'bounty', $3, $4)`,
+      [email, `moderation.${decision}`, String(onchainId), JSON.stringify({ from: bounty.moderation_status, note: note ?? null })],
+    )
+
+    res.json({ onchainId, moderationStatus: decision })
+  }),
+)
+
+// ---------------------------------------------------------------------------
+// Submissions, users, revenue, activity, audit, system
+// ---------------------------------------------------------------------------
+
+adminRouter.get(
+  '/submissions',
+  route(async (req: Request, res: Response) => {
+    const limit = clampInt(req.query.limit, 20, 1, 100)
+    const offset = clampInt(req.query.offset, 0, 0, 100_000)
+    const search = queryString(req.query.search, 80)?.toLowerCase()
+
+    const params: unknown[] = []
+    let where = ''
     if (search) {
       params.push(`%${search}%`)
-      conditions.push(`(
-        b.title ILIKE $${params.length}
-        OR b.creator_wallet ILIKE $${params.length}
-        OR b.description ILIKE $${params.length}
-        OR $${params.length} = ANY(b.tags)
-      )`)
+      where = `WHERE s.submitter_wallet LIKE $1 OR LOWER(b.title) LIKE $1 OR LOWER(COALESCE(su.email, '')) LIKE $1`
     }
-
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-
-    // Count query
-    const countRes = await query<{ total: number }>(
-      `SELECT COUNT(*)::int AS total FROM bounties b ${whereClause}`,
-      params
-    )
-    const total = countRes.rows[0]?.total || 0
-
-    // Data query
     params.push(limit, offset)
-    const dataSql = `
-      SELECT
-        b.id,
-        b.onchain_id AS "onchainId",
-        b.creator_user_id AS "creatorUserId",
-        b.creator_wallet AS "creatorWallet",
-        b.title,
-        b.description,
-        b.reward_amount::text AS "rewardAmount",
-        b.token_symbol AS "tokenSymbol",
-        b.deadline,
-        b.tags,
-        b.links,
-        b.tx_hash AS "txHash",
-        b.onchain_status AS "onchainStatus",
-        b.created_at AS "createdAt",
-        b.updated_at AS "updatedAt",
-        (SELECT COUNT(*)::int FROM submissions s WHERE s.bounty_id = b.id) AS "submissionsCount",
-        u.email AS "creatorEmail",
-        u.display_name AS "creatorDisplayName"
-      FROM bounties b
-      LEFT JOIN users u ON b.creator_user_id = u.id
-      ${whereClause}
-      ORDER BY b.created_at DESC
-      LIMIT $${params.length - 1} OFFSET $${params.length}
-    `
 
-    const dataRes = await query(dataSql, params)
+    const rows = await query<{ total: string }>(
+      `SELECT s.id, s.submitter_wallet AS "submitterWallet", s.description, s.pull_request_url AS "pullRequestUrl",
+              s.notes_verified AS "notesVerified", s.position, s.tx_hash AS "txHash", s.created_at AS "createdAt",
+              b.onchain_id::int AS "onchainId", b.title AS "bountyTitle", b.onchain_status AS "bountyStatus",
+              su.email AS "submitterEmail", su.display_name AS "submitterName",
+              COUNT(*) OVER()::text AS total
+         FROM submissions s
+         JOIN bounties b ON b.id = s.bounty_id
+         LEFT JOIN users su ON su.id = COALESCE(s.submitter_user_id, (SELECT user_id FROM wallets WHERE address = s.submitter_wallet))
+        ${where}
+        ORDER BY s.created_at DESC
+        LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    )
+    const total = rows.rows[0] ? Number(rows.rows[0].total) : 0
+    res.json({ items: rows.rows.map(({ total: _t, ...rest }) => rest), total, limit, offset })
+  }),
+)
 
-    res.json({
-      success: true,
-      bounties: dataRes.rows,
-      total,
-      limit,
-      offset,
-    })
-  } catch (err) {
-    console.error('[Admin API] Failed to fetch bounties:', err)
-    res.status(500).json({ error: (err as Error).message })
-  }
-})
+adminRouter.get(
+  '/users',
+  route(async (req: Request, res: Response) => {
+    const limit = clampInt(req.query.limit, 20, 1, 100)
+    const offset = clampInt(req.query.offset, 0, 0, 100_000)
+    const search = queryString(req.query.search, 80)?.toLowerCase()
 
-// GET /api/admin/submissions - Paginated submissions across the platform
-adminRouter.get('/submissions', optionalAuth, requireAdmin, async (req: Request, res: Response) => {
-  try {
-    const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100)
-    const offset = Math.max(Number(req.query.offset) || 0, 0)
-    const status = (req.query.status as string)?.trim()
-    const search = (req.query.search as string)?.trim()
-
-    const conditions: string[] = []
-    const params: (string | number)[] = []
-
-    if (status && status !== 'all') {
-      params.push(status)
-      conditions.push(`s.status = $${params.length}`)
-    }
-
+    const params: unknown[] = []
+    let where = ''
     if (search) {
       params.push(`%${search}%`)
-      conditions.push(`(
-        s.submitter_wallet ILIKE $${params.length}
-        OR b.title ILIKE $${params.length}
-        OR s.pull_request_url ILIKE $${params.length}
-        OR s.description ILIKE $${params.length}
-      )`)
+      where = `WHERE LOWER(COALESCE(u.email, '')) LIKE $1 OR LOWER(COALESCE(u.display_name, '')) LIKE $1 OR COALESCE(w.address, '') LIKE $1`
+    }
+    params.push(limit, offset)
+
+    const rows = await query<{ total: string }>(
+      `SELECT u.id, u.email, u.display_name AS "displayName", u.photo_url AS "photoUrl", u.created_at AS "createdAt",
+              u.last_seen_at AS "lastSeenAt", w.address AS wallet,
+              (SELECT COUNT(*)::int FROM bounties b WHERE b.creator_user_id = u.id) AS bounties,
+              (SELECT COUNT(*)::int FROM submissions s WHERE s.submitter_user_id = u.id) AS submissions,
+              COUNT(*) OVER()::text AS total
+         FROM users u
+         LEFT JOIN wallets w ON w.user_id = u.id AND w.verified
+        ${where}
+        ORDER BY u.last_seen_at DESC
+        LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    )
+    const total = rows.rows[0] ? Number(rows.rows[0].total) : 0
+    res.json({ items: rows.rows.map(({ total: _t, ...rest }) => rest), total, limit, offset })
+  }),
+)
+
+adminRouter.get(
+  '/revenue',
+  route(async (req: Request, res: Response) => {
+    const limit = clampInt(req.query.limit, 20, 1, 100)
+    const offset = clampInt(req.query.offset, 0, 0, 100_000)
+    const kind = queryString(req.query.kind, 1)
+
+    const params: unknown[] = []
+    let where = ''
+    if (kind === '0' || kind === '1') {
+      params.push(Number(kind))
+      where = 'WHERE f.kind = $1'
+    }
+    params.push(limit, offset)
+
+    const rows = await query<{ total: string }>(
+      `SELECT f.id, f.kind, f.amount::text AS amount, f.payer_wallet AS "payerWallet", f.tx_hash AS "txHash",
+              f.block_time AS "time", f.onchain_id::int AS "onchainId", b.title AS "bountyTitle",
+              COUNT(*) OVER()::text AS total
+         FROM platform_fees f
+         JOIN bounties b ON b.id = f.bounty_id
+        ${where}
+        ORDER BY f.block_time DESC
+        LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    )
+    const total = rows.rows[0] ? Number(rows.rows[0].total) : 0
+    res.json({ items: rows.rows.map(({ total: _t, ...rest }) => rest), total, limit, offset })
+  }),
+)
+
+adminRouter.get(
+  '/activity',
+  route(async (req: Request, res: Response) => {
+    const limit = clampInt(req.query.limit, 30, 1, 100)
+    const offset = clampInt(req.query.offset, 0, 0, 100_000)
+    const rows = await query<{ total: string }>(
+      `SELECT a.id, a.onchain_id::int AS "onchainId", a.kind, a.actor_wallet AS "actorWallet", a.position,
+              a.amount::text AS amount, a.fee::text AS fee, a.tx_hash AS "txHash", a.block_time AS "time",
+              b.title AS "bountyTitle", b.moderation_status AS "moderationStatus", COUNT(*) OVER()::text AS total
+         FROM bounty_activity a
+         JOIN bounties b ON b.id = a.bounty_id
+        ORDER BY a.block_time DESC, a.log_index DESC
+        LIMIT $1 OFFSET $2`,
+      [limit, offset],
+    )
+    const total = rows.rows[0] ? Number(rows.rows[0].total) : 0
+    res.json({ items: rows.rows.map(({ total: _t, ...rest }) => rest), total, limit, offset })
+  }),
+)
+
+adminRouter.get(
+  '/audit',
+  route(async (req: Request, res: Response) => {
+    const limit = clampInt(req.query.limit, 30, 1, 100)
+    const offset = clampInt(req.query.offset, 0, 0, 100_000)
+    const rows = await query<{ total: string }>(
+      `SELECT id, admin_email AS "adminEmail", action, target_type AS "targetType", target_id AS "targetId",
+              detail, created_at AS "createdAt", COUNT(*) OVER()::text AS total
+         FROM admin_audit_log ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+      [limit, offset],
+    )
+    const total = rows.rows[0] ? Number(rows.rows[0].total) : 0
+    res.json({ items: rows.rows.map(({ total: _t, ...rest }) => rest), total, limit, offset })
+  }),
+)
+
+adminRouter.get(
+  '/system',
+  route(async (_req: Request, res: Response) => {
+    const dbStart = Date.now()
+    await pool.query('SELECT 1')
+    const dbLatencyMs = Date.now() - dbStart
+
+    let latestBlock: number | null = null
+    let rpcLatencyMs: number | null = null
+    try {
+      const rpcStart = Date.now()
+      latestBlock = Number(await publicClient.getBlockNumber())
+      rpcLatencyMs = Date.now() - rpcStart
+    } catch {
+      latestBlock = null
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-
-    // Count
-    const countRes = await query<{ total: number }>(
-      `SELECT COUNT(*)::int AS total
-       FROM submissions s
-       JOIN bounties b ON s.bounty_id = b.id
-       ${whereClause}`,
-      params
-    )
-    const total = countRes.rows[0]?.total || 0
-
-    // Data query
-    params.push(limit, offset)
-    const dataSql = `
-      SELECT
-        s.id,
-        s.bounty_id AS "bountyId",
-        s.onchain_bounty_id AS "onchainId",
-        s.submitter_user_id AS "submitterUserId",
-        s.submitter_wallet AS "submitterWallet",
-        s.description,
-        s.pull_request_url AS "pullRequestUrl",
-        s.attachments,
-        s.status,
-        s.tx_hash AS "txHash",
-        s.created_at AS "createdAt",
-        s.updated_at AS "updatedAt",
-        b.title AS "bountyTitle",
-        b.reward_amount::text AS "bountyReward",
-        b.onchain_status AS "bountyStatus",
-        b.creator_wallet AS "bountyCreatorWallet",
-        u.email AS "submitterEmail",
-        u.display_name AS "submitterDisplayName"
-      FROM submissions s
-      JOIN bounties b ON s.bounty_id = b.id
-      LEFT JOIN users u ON s.submitter_user_id = u.id
-      ${whereClause}
-      ORDER BY s.created_at DESC
-      LIMIT $${params.length - 1} OFFSET $${params.length}
-    `
-
-    const dataRes = await query(dataSql, params)
-
     res.json({
-      success: true,
-      submissions: dataRes.rows,
-      total,
-      limit,
-      offset,
+      network: { chainId: config.chain.id, rpcUrl: config.chain.rpcUrl, explorerUrl: config.chain.explorerUrl },
+      contract: config.chain.contractAddress,
+      usdc: config.chain.usdcAddress,
+      treasury: config.chain.treasuryAddress,
+      database: { latencyMs: dbLatencyMs, poolTotal: pool.totalCount, poolIdle: pool.idleCount, poolWaiting: pool.waitingCount },
+      rpc: { latestBlock, latencyMs: rpcLatencyMs },
+      indexer: {
+        ...indexerStatus,
+        lagBlocks: latestBlock !== null && indexerStatus.lastBlock !== null ? Math.max(latestBlock - indexerStatus.lastBlock, 0) : null,
+      },
+      admins: config.adminEmails,
     })
-  } catch (err) {
-    console.error('[Admin API] Failed to fetch submissions:', err)
-    res.status(500).json({ error: (err as Error).message })
-  }
-})
+  }),
+)

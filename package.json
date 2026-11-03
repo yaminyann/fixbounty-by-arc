@@ -15,7 +15,11 @@
     "contracts:build": "forge build",
     "contracts:test": "forge test",
     "server": "bun run server/src/index.ts",
-    "server:migrate": "bun run server/src/migrate.ts"
+    "server:migrate": "bun run server/src/migrate.ts",
+    "abi": "bun run scripts/export-abi.ts",
+    "server:typecheck": "tsc -p server --noEmit",
+    "server:build": "tsc -p server && node -e \"require('fs').cpSync('server/src/migrations','server/dist/migrations',{recursive:true})\"",
+    "test:e2e": "bun run server:build && node server/test/e2e.mjs"
   },
   "dependencies": {
     "@circle-fin/adapter-viem-v2": "^1.19.2",

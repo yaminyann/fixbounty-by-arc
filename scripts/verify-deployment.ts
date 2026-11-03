@@ -1,98 +1,47 @@
+/**
+ * Checks a BountyBoard deployment against the values the platform expects.
+ *
+ *   BOUNTY_BOARD_ADDRESS=0x... TREASURY_ADDRESS=0x... bun run scripts/verify-deployment.ts
+ *
+ * Optional: ARC_RPC_URL (default https://rpc.testnet.arc.io), USDC_ADDRESS.
+ */
 import { createPublicClient, http } from 'viem'
 import { arcTestnet } from 'viem/chains'
-import { BOUNTY_BOARD_ADDRESS, BOUNTY_BOARD_ABI, USDC_ADDRESS } from '../src/lib/contract'
+import { BOUNTY_BOARD_ABI } from '../src/lib/bountyBoardAbi'
 
-async function main() {
-  console.log('--- Verifying Arc Testnet Deployment ---')
-  console.log('Contract Address:', BOUNTY_BOARD_ADDRESS)
-  console.log('Expected USDC Address:', USDC_ADDRESS)
+const contract = process.env.BOUNTY_BOARD_ADDRESS as `0x${string}` | undefined
+const treasury = process.env.TREASURY_ADDRESS as `0x${string}` | undefined
+const usdc = (process.env.USDC_ADDRESS ?? '0x3600000000000000000000000000000000000000') as `0x${string}`
+const rpc = process.env.ARC_RPC_URL ?? 'https://rpc.testnet.arc.io'
 
-  const client = createPublicClient({
-    chain: arcTestnet,
-    transport: http('https://rpc.testnet.arc.io'),
-  })
-
-  // 1. Verify Chain ID
-  const chainId = await client.getChainId()
-  console.log('Actual Chain ID from RPC:', chainId, chainId === 5042002 ? '✓ MATCH' : '✗ MISMATCH')
-
-  // 2. Verify Bytecode at deployed address
-  const bytecode = await client.getBytecode({ address: BOUNTY_BOARD_ADDRESS })
-  if (!bytecode || bytecode === '0x') {
-    console.error('✗ No bytecode found at', BOUNTY_BOARD_ADDRESS)
-    process.exit(1)
-  }
-  console.log('Bytecode Length:', bytecode.length, 'bytes (deployed code verified ✓)')
-
-  // 3. Verify Contract Read: usdc()
-  const contractUsdc = await client.readContract({
-    address: BOUNTY_BOARD_ADDRESS,
-    abi: [
-      {
-        type: 'function',
-        name: 'usdc',
-        stateMutability: 'view',
-        inputs: [],
-        outputs: [{ type: 'address' }],
-      },
-    ],
-    functionName: 'usdc',
-  })
-  console.log('Contract USDC immutable address:', contractUsdc)
-  console.log(
-    'Matches Arc Testnet USDC (0x3600...):',
-    contractUsdc.toLowerCase() === USDC_ADDRESS.toLowerCase() ? '✓ MATCH' : '✗ MISMATCH'
-  )
-
-  // 4. Verify Contract Read: CLAIM_GRACE_PERIOD()
-  const gracePeriod = await client.readContract({
-    address: BOUNTY_BOARD_ADDRESS,
-    abi: BOUNTY_BOARD_ABI,
-    functionName: 'CLAIM_GRACE_PERIOD',
-  })
-  console.log('CLAIM_GRACE_PERIOD:', Number(gracePeriod), 'seconds (7 days =', 7 * 24 * 3600, ') ✓')
-
-  // 5. Verify Contract Read: getBountyCount()
-  const count = await client.readContract({
-    address: BOUNTY_BOARD_ADDRESS,
-    abi: BOUNTY_BOARD_ABI,
-    functionName: 'getBountyCount',
-  })
-  console.log('Current onchain bounty count:', Number(count))
-
-  // If there are bounties, read them
-  for (let i = 1; i <= Number(count); i++) {
-    const bounty = await client.readContract({
-      address: BOUNTY_BOARD_ADDRESS,
-      abi: BOUNTY_BOARD_ABI,
-      functionName: 'getBounty',
-      args: [BigInt(i)],
-    })
-    console.log(`Bounty #${i}:`, {
-      title: bounty.title,
-      creator: bounty.creator,
-      reward: bounty.reward.toString(),
-      deadline: new Date(Number(bounty.deadline) * 1000).toISOString(),
-      status: bounty.status,
-      approvedContributor: bounty.approvedContributor,
-    })
-  }
-
-  // 6. Verify Transaction Hash from deployment metadata
-  const deployTxHash = '0xb8a5afdd71d4ea371eec9a5f380049ac26aeb8630afdd9536257cf244084e870' as `0x${string}`
-  try {
-    const tx = await client.getTransaction({ hash: deployTxHash })
-    console.log('Deploy Tx found onchain ✓:', {
-      from: tx.from,
-      to: tx.to,
-      blockNumber: tx.blockNumber?.toString(),
-    })
-    const receipt = await client.getTransactionReceipt({ hash: deployTxHash })
-    console.log('Deploy Tx Receipt status:', receipt.status === 'success' ? '✓ SUCCESS' : receipt.status)
-    console.log('Created Contract Address from Receipt:', receipt.contractAddress)
-  } catch (e) {
-    console.log('Could not fetch deployment receipt:', (e as Error).message)
-  }
+if (!contract || !treasury) {
+  console.error('Set BOUNTY_BOARD_ADDRESS and TREASURY_ADDRESS.')
+  process.exit(1)
 }
 
-main().catch(console.error)
+const client = createPublicClient({ chain: arcTestnet, transport: http(rpc) })
+let failed = false
+const check = (label: string, ok: boolean, detail = '') => {
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${label}${detail ? `: ${detail}` : ''}`)
+  if (!ok) failed = true
+}
+
+const chainId = await client.getChainId()
+check('chain id', chainId === arcTestnet.id, String(chainId))
+
+const code = await client.getCode({ address: contract })
+check('bytecode present', Boolean(code && code !== '0x'), `${code?.length ?? 0} chars`)
+
+const read = <N extends 'usdc' | 'treasury' | 'POST_FEE_BPS' | 'CLAIM_FEE_BPS' | 'CLAIM_GRACE_PERIOD' | 'REVIEW_PERIOD' | 'MAX_WINNERS' | 'getBountyCount'>(functionName: N) =>
+  client.readContract({ address: contract, abi: BOUNTY_BOARD_ABI, functionName })
+
+check('usdc() matches', String(await read('usdc')).toLowerCase() === usdc.toLowerCase())
+check('treasury() matches', String(await read('treasury')).toLowerCase() === treasury.toLowerCase())
+check('post fee is 0.5%', (await read('POST_FEE_BPS')) === 50n)
+check('claim fee is 5%', (await read('CLAIM_FEE_BPS')) === 500n)
+check('claim grace is 7 days', (await read('CLAIM_GRACE_PERIOD')) === 7n * 24n * 3600n)
+check('review period is 7 days', (await read('REVIEW_PERIOD')) === 7n * 24n * 3600n)
+check('max winners is 10', Number(await read('MAX_WINNERS')) === 10)
+console.log(`bounties created so far: ${await read('getBountyCount')}`)
+
+process.exit(failed ? 1 : 0)

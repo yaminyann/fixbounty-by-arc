@@ -1,19 +1,18 @@
 import pg from 'pg'
-import dotenv from 'dotenv'
+import { config } from './config.js'
 
-dotenv.config()
+const { Pool, types } = pg
 
-const { Pool } = pg
-
-const connectionString =
-  process.env.DATABASE_URL ||
-  `postgresql://${process.env.POSTGRES_USER || 'fixbounty'}:${process.env.POSTGRES_PASSWORD || 'fixbounty_secure_pass'}@${process.env.POSTGRES_HOST || 'localhost'}:${process.env.POSTGRES_PORT || '5432'}/${process.env.POSTGRES_DB || 'fixbounty'}`
+// BIGINT / NUMERIC stay strings so USDC base units never lose precision in JS numbers.
+types.setTypeParser(20, (v) => v)
 
 export const pool = new Pool({
-  connectionString,
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
+  connectionString: config.databaseUrl,
+  max: 10,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 5_000,
+  keepAlive: true,
+  statement_timeout: 15_000,
 })
 
 pool.on('error', (err) => {
@@ -22,20 +21,18 @@ pool.on('error', (err) => {
 
 export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
   text: string,
-  params?: unknown[]
+  params?: unknown[],
 ): Promise<pg.QueryResult<T>> {
   const start = Date.now()
   const res = await pool.query<T>(text, params)
   const duration = Date.now() - start
-  if (process.env.NODE_ENV !== 'production' && duration > 100) {
-    console.log(`[SQL slow query] ${duration}ms: ${text.slice(0, 80)}...`)
+  if (duration > 250) {
+    console.warn(`[SQL slow ${duration}ms] ${text.replace(/\s+/g, ' ').slice(0, 120)}`)
   }
   return res
 }
 
-export async function withTransaction<T>(
-  callback: (client: pg.PoolClient) => Promise<T>
-): Promise<T> {
+export async function withTransaction<T>(callback: (client: pg.PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
@@ -43,7 +40,7 @@ export async function withTransaction<T>(
     await client.query('COMMIT')
     return result
   } catch (err) {
-    await client.query('ROLLBACK')
+    await client.query('ROLLBACK').catch(() => undefined)
     throw err
   } finally {
     client.release()
@@ -53,10 +50,10 @@ export async function withTransaction<T>(
 export async function testConnection(): Promise<boolean> {
   try {
     const res = await pool.query('SELECT NOW() AS now, current_database() AS db')
-    console.log(`[PostgreSQL Connected] Database: ${res.rows[0].db} at ${res.rows[0].now}`)
+    console.log(`[PostgreSQL] Connected to ${res.rows[0].db}`)
     return true
   } catch (err) {
-    console.error('[PostgreSQL Connection Failed]', err)
+    console.error('[PostgreSQL] Connection failed:', (err as Error).message)
     return false
   }
 }

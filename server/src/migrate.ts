@@ -56,7 +56,7 @@ export async function runMigrations(): Promise<void> {
 }
 
 // If run directly
-if (process.argv[1] && process.argv[1].endsWith('migrate.ts')) {
+if (process.argv[1] && /migrate\.(ts|js)$/.test(process.argv[1])) {
   runMigrations()
     .then(() => {
       console.log('[Migrations] Finished.')

@@ -1,32 +1,28 @@
-version: '3.8'
-
+# All-in-one stack: PostgreSQL + API + web. Used for self-hosting on a single machine.
+# Copy .env.example to .env and fill it in first. Nothing here has a built-in password.
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: fixbounty-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-fixbounty}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fixbounty_secure_pass}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-fixbounty}
     volumes:
       - fixbounty_pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
     networks:
       - fixbounty-net
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fixbounty} -d ${POSTGRES_DB:-fixbounty}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
       start_period: 5s
 
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
-    container_name: fixbounty-backend
     restart: unless-stopped
     depends_on:
       postgres:
@@ -34,23 +30,19 @@ services:
     environment:
       NODE_ENV: production
       PORT: 4000
-      DATABASE_URL: postgresql://${POSTGRES_USER:-fixbounty}:${POSTGRES_PASSWORD:-fixbounty_secure_pass}@postgres:5432/${POSTGRES_DB:-fixbounty}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-fixbounty}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-fixbounty}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:?Set FIREBASE_PROJECT_ID in .env}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:?Set ADMIN_EMAILS in .env}
       ARC_RPC_URL: ${ARC_RPC_URL:-https://rpc.testnet.arc.io}
-      BOUNTY_BOARD_ADDRESS: ${VITE_BOUNTY_BOARD_ADDRESS:-0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb}
-      FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-focus-timeer-project}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-fixbounty_admin_2026_arc}
-      ADMIN_SECRET: ${ADMIN_SECRET:-fixbounty_admin_2026_arc}
-      ADMIN_EMAILS: ${ADMIN_EMAILS:-yaminv75@gmail.com,admin@fixbounty.io}
-    ports:
-      - "4000:4000"
+      CHAIN_ID: ${VITE_ARC_CHAIN_ID:-5042002}
+      EXPLORER_URL: ${VITE_ARC_EXPLORER_URL:-https://explorer.testnet.arc.io}
+      BOUNTY_BOARD_ADDRESS: ${BOUNTY_BOARD_ADDRESS:-}
+      INDEXER_START_BLOCK: ${INDEXER_START_BLOCK:-}
+      USDC_ADDRESS: ${USDC_ADDRESS:-0x3600000000000000000000000000000000000000}
+      TREASURY_ADDRESS: ${TREASURY_ADDRESS:?Set TREASURY_ADDRESS in .env}
     networks:
       - fixbounty-net
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 
   frontend:
     build:
@@ -60,15 +52,15 @@ services:
         VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY}
         VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN}
         VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID}
-        VITE_FIREBASE_STORAGE_BUCKET: ${VITE_FIREBASE_STORAGE_BUCKET}
-        VITE_FIREBASE_MESSAGING_SENDER_ID: ${VITE_FIREBASE_MESSAGING_SENDER_ID}
+        VITE_FIREBASE_STORAGE_BUCKET: ${VITE_FIREBASE_STORAGE_BUCKET:-}
+        VITE_FIREBASE_MESSAGING_SENDER_ID: ${VITE_FIREBASE_MESSAGING_SENDER_ID:-}
         VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID}
-        VITE_FIREBASE_MEASUREMENT_ID: ${VITE_FIREBASE_MEASUREMENT_ID}
-        VITE_BOUNTY_BOARD_ADDRESS: ${VITE_BOUNTY_BOARD_ADDRESS:-0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb}
-        ARC_RPC_URL: ${ARC_RPC_URL:-https://rpc.testnet.arc.io}
-        VITE_ADMIN_PASSWORD: ${VITE_ADMIN_PASSWORD:-fixbounty_admin_2026_arc}
-        VITE_ADMIN_EMAILS: ${VITE_ADMIN_EMAILS:-yaminv75@gmail.com,admin@fixbounty.io}
-    container_name: fixbounty-frontend
+        VITE_FIREBASE_MEASUREMENT_ID: ${VITE_FIREBASE_MEASUREMENT_ID:-}
+        VITE_ARC_RPC_URL: ${VITE_ARC_RPC_URL:-https://rpc.testnet.arc.io}
+        VITE_ARC_CHAIN_ID: ${VITE_ARC_CHAIN_ID:-5042002}
+        VITE_ARC_EXPLORER_URL: ${VITE_ARC_EXPLORER_URL:-https://explorer.testnet.arc.io}
+        VITE_WALLETCONNECT_PROJECT_ID: ${VITE_WALLETCONNECT_PROJECT_ID:-}
+        VITE_API_URL: ${VITE_API_URL:-/api}
     restart: unless-stopped
     depends_on:
       backend:
@@ -77,12 +69,6 @@ services:
       - "5173:80"
     networks:
       - fixbounty-net
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
 
 volumes:
   fixbounty_pgdata:
@@ -90,5 +76,4 @@ volumes:
 
 networks:
   fixbounty-net:
-    name: fixbounty-net
     driver: bridge

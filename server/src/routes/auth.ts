@@ -1,119 +1,125 @@
-import crypto from 'crypto'
+import crypto from 'node:crypto'
 import { Router, type Request, type Response } from 'express'
 import { z } from 'zod'
-import { query } from '../db.js'
-import { requireAuth } from '../auth.js'
+import { config } from '../config.js'
+import { query, withTransaction } from '../db.js'
+import { getLinkedWallet, isAdminUser, requireAuth } from '../auth.js'
 import { verifyWalletSignature } from '../chain.js'
+import { HttpError, parse, route } from '../lib/http.js'
+import { rateLimit } from '../lib/limits.js'
 
 export const authRouter = Router()
 
-// GET /api/auth/me - Return authenticated user + linked wallets
-authRouter.get('/me', requireAuth, async (req: Request, res: Response) => {
-  const user = req.user!
-  const wallets = await query(
-    'SELECT id, address, chain_id, verified, linked_at FROM wallets WHERE user_id = $1 ORDER BY linked_at ASC',
-    [user.id]
-  )
+const CHALLENGE_TTL_MS = 5 * 60 * 1000
 
-  res.json({
-    user: {
-      id: user.id,
-      firebaseUid: user.firebase_uid,
-      email: user.email,
-      displayName: user.display_name,
-      photoUrl: user.photo_url,
-      createdAt: user.created_at,
-    },
-    wallets: wallets.rows,
-  })
-})
+const AddressSchema = z
+  .string()
+  .regex(/^0x[0-9a-fA-F]{40}$/)
+  .transform((a) => a.toLowerCase())
 
-// GET /api/auth/wallet-challenge - Request signature challenge nonce for wallet linking
-authRouter.get('/wallet-challenge', async (req: Request, res: Response) => {
-  const address = (req.query.address as string)?.toLowerCase()
-  if (!address || !/^0x[0-9a-f]{40}$/.test(address)) {
-    res.status(400).json({ error: 'Valid 0x Ethereum address required' })
-    return
-  }
+authRouter.get(
+  '/me',
+  requireAuth,
+  route(async (req: Request, res: Response) => {
+    const user = req.user!
+    const wallet = await getLinkedWallet(user.id)
+    res.setHeader('Cache-Control', 'private, no-store')
+    res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        displayName: user.displayName,
+        photoUrl: user.photoUrl,
+      },
+      wallet,
+      isAdmin: isAdminUser(user),
+    })
+  }),
+)
 
-  const nonce = crypto.randomBytes(32).toString('hex')
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
-  const challengeText = `Sign this message to verify ownership of wallet ${address} on FixBounty.\n\nNonce: ${nonce}\nIssued At: ${new Date().toISOString()}\nExpires At: ${expiresAt.toISOString()}`
+authRouter.post(
+  '/wallet/challenge',
+  rateLimit({ windowMs: 10 * 60_000, max: 20 }),
+  requireAuth,
+  route(async (req: Request, res: Response) => {
+    const { address } = parse(z.object({ address: AddressSchema }), req.body)
+    const user = req.user!
 
-  await query(
-    `INSERT INTO wallet_challenges (address, nonce, challenge_text, expires_at)
-     VALUES ($1, $2, $3, $4)`,
-    [address, nonce, challengeText, expiresAt]
-  )
+    const nonce = crypto.randomBytes(16).toString('hex')
+    const issuedAt = new Date()
+    const expiresAt = new Date(issuedAt.getTime() + CHALLENGE_TTL_MS)
+    const message = [
+      'FixBounty wants to link this wallet to your account.',
+      '',
+      `Wallet: ${address}`,
+      `Account: ${user.email ?? user.firebaseUid}`,
+      `Chain ID: ${config.chain.id}`,
+      `Nonce: ${nonce}`,
+      `Issued At: ${issuedAt.toISOString()}`,
+      `Expires At: ${expiresAt.toISOString()}`,
+      '',
+      'Signing is free and does not send a transaction.',
+    ].join('\n')
 
-  res.json({
-    address,
-    nonce,
-    challengeText,
-    expiresAt: expiresAt.toISOString(),
-  })
-})
+    await query(
+      `INSERT INTO wallet_challenges (user_id, address, nonce, challenge_text, expires_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [user.id, address, nonce, message, expiresAt],
+    )
 
-// POST /api/auth/link-wallet - Cryptographically link wallet to user account
-const LinkWalletSchema = z.object({
-  address: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
-  signature: z.string().min(10),
-})
+    res.json({ address, message, expiresAt: expiresAt.toISOString() })
+  }),
+)
 
-authRouter.post('/link-wallet', requireAuth, async (req: Request, res: Response) => {
-  const parsed = LinkWalletSchema.safeParse(req.body)
-  if (!parsed.success) {
-    res.status(400).json({ error: 'Invalid address or signature format', details: parsed.error.issues })
-    return
-  }
+authRouter.post(
+  '/wallet/link',
+  rateLimit({ windowMs: 10 * 60_000, max: 20 }),
+  requireAuth,
+  route(async (req: Request, res: Response) => {
+    const { address, signature } = parse(
+      z.object({ address: AddressSchema, signature: z.string().regex(/^0x[0-9a-fA-F]{130,}$/) }),
+      req.body,
+    )
+    const user = req.user!
 
-  const address = parsed.data.address.toLowerCase()
-  const signature = parsed.data.signature
-  const user = req.user!
+    const challenge = await query<{ id: string; challenge_text: string }>(
+      `SELECT id, challenge_text FROM wallet_challenges
+        WHERE user_id = $1 AND address = $2 AND expires_at > NOW()
+        ORDER BY created_at DESC LIMIT 1`,
+      [user.id, address],
+    )
+    if (challenge.rows.length === 0) {
+      throw new HttpError(400, 'The signing request expired. Start again.')
+    }
 
-  // Retrieve active challenge for this address
-  const challengeRes = await query<{
-    id: string
-    challenge_text: string
-    expires_at: string
-  }>(
-    `SELECT id, challenge_text, expires_at FROM wallet_challenges
-     WHERE address = $1 AND expires_at > NOW()
-     ORDER BY created_at DESC LIMIT 1`,
-    [address]
-  )
+    const valid = await verifyWalletSignature(address as `0x${string}`, challenge.rows[0].challenge_text, signature as `0x${string}`)
+    if (!valid) throw new HttpError(401, 'The signature does not match this wallet.')
 
-  if (challengeRes.rows.length === 0) {
-    res.status(400).json({ error: 'Challenge expired or not found. Please request a new wallet challenge.' })
-    return
-  }
+    const taken = await query<{ user_id: string }>('SELECT user_id FROM wallets WHERE address = $1', [address])
+    if (taken.rows[0] && taken.rows[0].user_id !== user.id) {
+      throw new HttpError(409, 'This wallet is already linked to another account.')
+    }
 
-  const challenge = challengeRes.rows[0]
+    await withTransaction(async (db) => {
+      await db.query('DELETE FROM wallet_challenges WHERE user_id = $1', [user.id])
+      await db.query(
+        `INSERT INTO wallets (user_id, address, chain_id, verified, verification_method, linked_at, updated_at)
+         VALUES ($1, $2, $3, TRUE, 'signature_challenge', NOW(), NOW())
+         ON CONFLICT (user_id) DO UPDATE SET
+           address = EXCLUDED.address, chain_id = EXCLUDED.chain_id, verified = TRUE, linked_at = NOW(), updated_at = NOW()`,
+        [user.id, address, config.chain.id],
+      )
+    })
 
-  // Verify cryptographic signature
-  const isValid = await verifyWalletSignature(address, challenge.challenge_text, signature)
-  if (!isValid) {
-    res.status(401).json({ error: 'Invalid wallet signature. Ownership verification failed.' })
-    return
-  }
+    res.json({ wallet: address })
+  }),
+)
 
-  // Delete used challenge (replay protection)
-  await query('DELETE FROM wallet_challenges WHERE id = $1', [challenge.id])
-
-  // Upsert wallet record linked to user
-  const walletRes = await query(
-    `INSERT INTO wallets (user_id, address, chain_id, verified, verification_method, linked_at, updated_at)
-     VALUES ($1, $2, 5042002, TRUE, 'signature_challenge', NOW(), NOW())
-     ON CONFLICT (user_id, address) DO UPDATE SET
-       verified = TRUE,
-       updated_at = NOW()
-     RETURNING id, address, chain_id, verified, linked_at`,
-    [user.id, address]
-  )
-
-  res.json({
-    success: true,
-    wallet: walletRes.rows[0],
-    message: 'Wallet successfully verified and linked to your account.',
-  })
-})
+authRouter.delete(
+  '/wallet',
+  requireAuth,
+  route(async (req: Request, res: Response) => {
+    await query('DELETE FROM wallets WHERE user_id = $1', [req.user!.id])
+    res.json({ wallet: null })
+  }),
+)

@@ -1,90 +1,50 @@
-# FixBounty — Project Memory
+# FixBounty: Project Memory
 
-## What This App Does
+## What this app does
 
-FixBounty is an onchain bounty platform for open-source developers. Maintainers post USDC rewards for bug fixes; contributors submit work; creators approve the best submission; the approved contributor claims USDC directly from the smart contract. Built on Arc Testnet.
+An escrow board for open-source bug fixes on Arc Testnet. Maintainers lock a USDC prize in `BountyBoard`; contributors submit work; the maintainer picks winners (one, several, or ranked places); each winner claims their share from the contract. An admin must approve a bounty before it appears on the website. Platform fees go to a fixed treasury wallet.
 
-## Tech Stack
+## Tech stack
 
-- Frontend: React 18, Vite, TypeScript, Tailwind CSS, React Router v7
-- Auth: Firebase Authentication (Google sign-in) via `firebase` npm package
-- Off-chain: Firebase Firestore (bounty descriptions, submission notes, activity log)
-- Web3: wagmi v2, viem v2, ConnectKit
-- Contracts: Solidity 0.8.28 + Foundry. Sources in `contracts/`, unit tests in `contracts/test/*.t.sol`. Build with `bun run contracts:build` (`forge build`), test with `bun run contracts:test` (`forge test`).
-- Chain: Arc Testnet (Chain ID: 5042002, imported from `viem/chains` as `arcTestnet`)
-- Token: USDC (6 decimals, address: 0x3600000000000000000000000000000000000000, Arc Testnet)
+- Frontend: React 18, Vite, TypeScript, Tailwind, React Router v7, wagmi v2 + viem v2 (own wallet dialog, no ConnectKit), TanStack Query.
+- Auth: Firebase Authentication (Google) in the browser. The server verifies the ID token with jose against Google's JWKS.
+- Backend: Express 4 + `pg` + viem + zod, run with Bun (`server/src/index.ts`). PostgreSQL is the read model; the chain is authoritative.
+- Contracts: Solidity 0.8.28 + Foundry in `contracts/`. `bun run contracts:test`, `bun run contracts:build`. On this Windows machine forge runs through WSL: `wsl.exe -e bash -lc 'cd /mnt/f/... && ~/.foundry/bin/forge test'`.
+- Chain: Arc Testnet (5042002). USDC ERC-20 `0x3600000000000000000000000000000000000000` (6 decimals; gas is the same USDC at 18 decimals, never mix the two views).
 
-## Deployed Contracts
+## Business rules (enforced in the contract unless noted)
 
-| Contract | Network | Address | Explorer |
-|---|---|---|---|
-| BountyBoard | Arc Testnet | 0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb | https://explorer.testnet.arc.io/address/0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb |
+- Fees: 0.5% (`POST_FEE_BPS = 50`) added to the creator's payment at `fundBounty`, never refunded. 5% (`CLAIM_FEE_BPS = 500`) deducted from each winner's payout at `claimReward`. Both are pushed straight to the immutable `treasury`.
+- Prize places: `createBounty(..., sharesBps[])`, 1 to 10 places, shares non-increasing and summing to 10000. Position 1 absorbs rounding dust. The creator calls `approveWinners(id, winners[])` once; winners fill places from the top; unused places return to the creator immediately.
+- Claim window: `CLAIM_GRACE_PERIOD` (7 days) is measured from `approvedAt`, not from the deadline.
+- Creator refund: after the deadline if there were no submissions, otherwise after `deadline + REVIEW_PERIOD` (7 days).
+- No owner or admin role in the contract.
+- Moderation (server only): `bounties.moderation_status` is `pending | approved | rejected`. Only approved and metadata-verified bounties are public. Admins can approve only funded bounties.
 
-Constructor arg: `_usdc = 0x3600000000000000000000000000000000000000` (Arc Testnet USDC)
+## Architecture decisions
 
-Deploy tx: 0xb8a5afdd71d4ea371eec9a5f380049ac26aeb8630afdd9536257cf244084e870
+- Chain state is authoritative for money, status, winners. The indexer (`server/src/services/indexer.ts`) walks contract events in chunks (the Arc RPC rejects `eth_getLogs` ranges above about 1000 blocks), re-reads touched bounties, and writes `bounties`, `submissions`, `bounty_activity`, `platform_fees`. It takes a Postgres advisory lock so only one instance indexes. Activity and fees come only from events and cannot be forged through the API.
+- Text integrity: `contentHash` and `submissionHash` are `sha256:<hex>` of canonical JSON (`src/lib/metadata.ts` mirrors `server/src/lib/metadata.ts`; change both together). The server rejects text that does not match the on-chain hash. Bounty text is immutable after publishing.
+- Identity: a user is a Google account plus a wallet linked by a signed challenge (`/api/auth/wallet/*`). One wallet per account, one account per wallet. Write endpoints require both. Frontend state machine is `IdentityContext` (`none`, `needs_google`, `needs_wallet`, `needs_link`, `wallet_mismatch`, `ready`).
+- Admin = verified Google e-mail in `ADMIN_EMAILS`, checked server-side. No shared password, nothing admin-related in the browser bundle.
+- The browser gets contract and fee configuration from `GET /api/config`, so changing `BOUNTY_BOARD_ADDRESS` needs no frontend rebuild.
+- Firestore is not used. Firebase is only for Google sign-in.
+- Performance: lists are one indexed SQL query with partial indexes, a 3 second TTL cache and cache headers; the auth user lookup is cached; pages are lazy chunks; the wallet UI is loaded on demand.
 
-## Key Files
+## Key files
 
-- `src/App.tsx` — Router root (thin, imports all pages)
-- `src/main.tsx` — App entry point with all providers (BrowserRouter, WagmiProvider, AuthProvider)
-- `src/firebase.ts` — Firebase app/auth/db init
-- `src/contexts/AuthContext.tsx` — Auth state + Google sign-in
-- `src/lib/contract.ts` — Contract address, ABI, chain config
-- `src/lib/bountyTypes.ts` — Shared types, normalization, error parsing
-- `src/lib/firestore.ts` — All Firestore read/write helpers
-- `src/hooks/useBounty.ts` — wagmi hooks for contract reads
-- `src/pages/Landing.tsx` — Homepage
-- `src/pages/Explore.tsx` — Bounty explorer
-- `src/pages/BountyDetail.tsx` — Full bounty lifecycle UI
-- `src/pages/CreateBounty.tsx` — 3-step create+fund flow
-- `src/pages/Dashboard.tsx` — User dashboard
-- `src/pages/Profile.tsx` — Profile + wallet link
-- `src/pages/ActivityFeed.tsx` — Activity log
-- `src/pages/Help.tsx` — Help, security notes, setup guide
-- `src/components/layout/Layout.tsx` — App shell with nav + footer
-- `src/components/ui/` — StatusBadge, BountyCard, NetworkGuard
-- `contracts/BountyBoard.sol` — Main contract
-- `contracts/test/BountyBoard.Unit.t.sol` — 62 unit tests
-- `contracts/test/BountyBoard.Fuzz.t.sol` — 7 fuzz tests
-- `contracts/test/BountyBoard.Invariant.t.sol` — 3 invariants
+- `contracts/BountyBoard.sol`, `contracts/test/*.t.sol` (97 tests), `contracts/script/DeployBountyBoard.s.sol`
+- `scripts/export-abi.ts` (`bun run abi`) regenerates `src/lib/bountyBoardAbi.ts` and `server/src/abi.ts` from the forge build
+- `server/src/index.ts`, `config.ts`, `auth.ts`, `chain.ts`, `routes/{auth,bounties,me,public,admin}.ts`, `services/{indexer,bountySync,projections}.ts`, `migrations/003_v2_platform.sql`
+- `server/test/e2e.mjs` (backend end-to-end against anvil + Postgres), `server/test/dev-stack.mjs` (seeded stack for browser testing with `vite --mode e2e`)
+- `src/App.tsx` (lazy routes), `src/contexts/{AuthContext,IdentityContext}.tsx`, `src/lib/api/*`, `src/hooks/useBountyContract.ts`, `src/features/bounty/*` (fund, submit, select winners, claim, reclaim), `src/pages/*`, `src/pages/admin/*`
+- `DESIGN.md` is the design direction (black and signal yellow, payout ladder motif). `antislop` rules apply to UI work.
+- Generated by Arc Studio, do not edit: `src/onchain-facts.ts`, `src/onchain-money.ts`, `src/onchain-wait.ts`, `src/tracing.ts`, `src/console-capture.ts`.
 
-## Contract State Machine
+## Operating notes
 
-```
-Open → Funded → Approved → Claimed
-         ↓                   ↑ (creator after deadline + 7d grace)
-       Refunded (deadline passed, not approved)
-Open → Cancelled (creator, not yet funded)
-Approved → Refunded (creator, deadline + CLAIM_GRACE_PERIOD = 7 days)
-```
-
-## Architecture Decisions
-
-- Chain state is authoritative for funds, status, and approval. Firestore is display-only.
-- Firebase UID = app identity. Wallet signature = blockchain identity. Never conflated.
-- Bounty content hash is `sha256:<base64 prefix>` of the description (IPFS integration optional upgrade).
-- Submission hashes follow same pattern.
-- The BountyBoard has no admin/owner — all access control is per-bounty (creator / approvedContributor).
-- ReentrancyGuard on claimReward and refundBounty; SafeERC20 for all transfers; CEI ordering throughout.
-
-## Environment Variables Required
-
-- `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID` — Firebase web config
-- `VITE_BOUNTY_BOARD_ADDRESS` — contract address (pre-filled in code)
-
-## To Run
-
-```bash
-bun install
-bun run dev
-```
-
-## Contract Security Review
-
-Balanced security review completed (2 rounds):
-- Round 1 found 2 Critical findings (fund lock after approval, USDC blocklist brick)
-- Both fixed by adding `refundAfterApproval` with 7-day grace period
-- Round 2 returned clean (0 findings)
-- Slither: 0 High/Medium findings (4 Low timestamp-usage notes, expected for deadline contracts)
-- 72 forge tests all pass (unit, fuzz, invariant)
+- `.env.example` documents every variable. `FIREBASE_PROJECT_ID` must equal `VITE_FIREBASE_PROJECT_ID`.
+- After deploying a new contract: set `BOUNTY_BOARD_ADDRESS` and `INDEXER_START_BLOCK`, restart the backend. Old-contract tables are kept as `legacy_*`.
+- The previous contract (`0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb`) used a different ABI and is no longer supported by the app.
+- Do not put secrets in `VITE_` variables, Dockerfile build args, or committed files.
+- The contract has not had an independent audit.

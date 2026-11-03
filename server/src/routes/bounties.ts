@@ -1,476 +1,294 @@
 import { Router, type Request, type Response } from 'express'
 import { z } from 'zod'
-import { query, withTransaction } from '../db.js'
-import { requireAuth, optionalAuth } from '../auth.js'
-import { fetchOnchainBounty, verifyTxReceipt } from '../chain.js'
+import { config } from '../config.js'
+import { query } from '../db.js'
+import { isAdminUser, optionalAuth, requireAuth, requireLinkedWallet, getLinkedWallet } from '../auth.js'
+import { readBounty, readSubmissionHash } from '../chain.js'
+import { HttpError, clampInt, parse, parseOnchainId, queryString, route } from '../lib/http.js'
+import { TtlCache, rateLimit } from '../lib/limits.js'
+import { BountyMetadataSchema, SubmissionMetadataSchema, bountyCommitment, submissionCommitment } from '../lib/metadata.js'
+import { syncBounty, upsertChainBounty } from '../services/bountySync.js'
+import { nudgeIndexer } from '../services/indexer.js'
+import {
+  BOUNTY_DETAIL_COLUMNS,
+  BOUNTY_DETAIL_FROM,
+  BOUNTY_LIST_COLUMNS,
+  DEFAULT_PUBLIC_STATUSES,
+  SUBMISSION_COLUMNS,
+  toTsQuery,
+} from '../services/projections.js'
 
 export const bountiesRouter = Router()
 
-// GET /api/bounties - List bounties with search and filters
-bountiesRouter.get('/', async (req: Request, res: Response) => {
-  const status = req.query.status !== undefined ? Number(req.query.status) : undefined
-  const search = (req.query.search as string)?.trim()
-  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100)
-  const offset = Math.max(Number(req.query.offset) || 0, 0)
+const listCache = new TtlCache<{ items: unknown[]; total: number }>(3_000)
 
-  let sql = `
-    SELECT
-      b.id,
-      b.onchain_id AS "onchainId",
-      b.creator_user_id AS "creatorUserId",
-      b.creator_wallet AS "creatorWallet",
-      b.title,
-      b.description,
-      b.acceptance_criteria AS "acceptanceCriteria",
-      b.reward_amount::text AS "rewardAmount",
-      b.token_symbol AS "tokenSymbol",
-      b.token_address AS "tokenAddress",
-      b.deadline,
-      b.tags,
-      b.links,
-      b.tx_hash AS "txHash",
-      b.onchain_status AS "onchainStatus",
-      b.created_at AS "createdAt",
-      b.updated_at AS "updatedAt",
-      (SELECT COUNT(*)::int FROM submissions s WHERE s.bounty_id = b.id) AS "submissionsCount"
-    FROM bounties b
-    WHERE 1=1
-  `
-  const params: unknown[] = []
+const SORTS: Record<string, string> = {
+  newest: 'b.created_at DESC',
+  reward: 'b.reward_amount DESC, b.created_at DESC',
+  deadline: 'b.deadline ASC',
+  popular: 'b.submission_count DESC, b.created_at DESC',
+}
 
-  if (status !== undefined && !isNaN(status)) {
-    params.push(status)
-    sql += ` AND b.onchain_status = $${params.length}`
-  }
+// ---------------------------------------------------------------------------
+// Public listing (only admin-approved bounties)
+// ---------------------------------------------------------------------------
 
-  if (search) {
-    params.push(`%${search}%`)
-    sql += ` AND (b.title ILIKE $${params.length} OR b.description ILIKE $${params.length} OR $${params.length} = ANY(b.tags))`
-  }
+bountiesRouter.get(
+  '/',
+  route(async (req: Request, res: Response) => {
+    const limit = clampInt(req.query.limit, 12, 1, 50)
+    const offset = clampInt(req.query.offset, 0, 0, 100_000)
+    const sort = SORTS[queryString(req.query.sort, 20) ?? 'newest'] ?? SORTS.newest
+    const search = queryString(req.query.search, 80)
+    const statusParam = queryString(req.query.status, 20)
+    const openOnly = req.query.open === '1' || req.query.open === 'true'
+    const creator = queryString(req.query.creator, 42)?.toLowerCase()
 
-  sql += ` ORDER BY b.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`
-  params.push(limit, offset)
+    const statuses = statusParam
+      ? statusParam
+          .split(',')
+          .map(Number)
+          .filter((n) => Number.isInteger(n) && n >= 0 && n <= 5)
+      : DEFAULT_PUBLIC_STATUSES
 
-  const result = await query(sql, params)
-  res.json({
-    bounties: result.rows,
-    count: result.rows.length,
-    limit,
-    offset,
-  })
-})
+    const cacheKey = JSON.stringify([limit, offset, sort, search, statuses, openOnly, creator])
+    const result = await listCache.get(cacheKey, async () => {
+      const params: unknown[] = [statuses.length > 0 ? statuses : DEFAULT_PUBLIC_STATUSES]
+      let where = `b.moderation_status = 'approved' AND b.metadata_verified AND b.onchain_status = ANY($1::int[])`
 
-// GET /api/bounties/creator/:identifier - List bounties for specific creator (wallet or UID)
-bountiesRouter.get('/creator/:identifier', async (req: Request, res: Response) => {
-  const rawId = req.params.identifier
-  const identifier = (Array.isArray(rawId) ? rawId[0] : String(rawId)).toLowerCase()
-  const result = await query(
-    `
-    SELECT
-      b.id,
-      b.onchain_id AS "onchainId",
-      b.creator_user_id AS "creatorUserId",
-      b.creator_wallet AS "creatorWallet",
-      b.title,
-      b.description,
-      b.acceptance_criteria AS "acceptanceCriteria",
-      b.reward_amount::text AS "rewardAmount",
-      b.token_symbol AS "tokenSymbol",
-      b.token_address AS "tokenAddress",
-      b.deadline,
-      b.tags,
-      b.links,
-      b.tx_hash AS "txHash",
-      b.onchain_status AS "onchainStatus",
-      b.created_at AS "createdAt",
-      b.updated_at AS "updatedAt",
-      (SELECT COUNT(*)::int FROM submissions s WHERE s.bounty_id = b.id) AS "submissionsCount"
-    FROM bounties b
-    LEFT JOIN users u ON b.creator_user_id = u.id
-    WHERE b.creator_wallet = $1
-       OR u.firebase_uid = $1
-       OR b.creator_user_id::text = $1
-    ORDER BY b.created_at DESC
-    `,
-    [identifier]
-  )
-
-  res.json({ bounties: result.rows })
-})
-
-// GET /api/bounties/:id - Get single bounty by internal UUID or onchain ID
-bountiesRouter.get('/:id', optionalAuth, async (req: Request, res: Response) => {
-  const rawParam = req.params.id
-  const param = Array.isArray(rawParam) ? rawParam[0] : String(rawParam)
-  const isNumeric = /^\d+$/.test(param)
-
-  const sql = `
-    SELECT
-      b.id,
-      b.onchain_id AS "onchainId",
-      b.creator_user_id AS "creatorUserId",
-      b.creator_wallet AS "creatorWallet",
-      b.title,
-      b.description,
-      b.acceptance_criteria AS "acceptanceCriteria",
-      b.reward_amount::text AS "rewardAmount",
-      b.token_symbol AS "tokenSymbol",
-      b.token_address AS "tokenAddress",
-      b.deadline,
-      b.tags,
-      b.links,
-      b.tx_hash AS "txHash",
-      b.onchain_status AS "onchainStatus",
-      b.created_at AS "createdAt",
-      b.updated_at AS "updatedAt",
-      (SELECT COUNT(*)::int FROM submissions s WHERE s.bounty_id = b.id) AS "submissionsCount"
-    FROM bounties b
-    WHERE ${isNumeric ? 'b.onchain_id = $1' : 'b.id = $1'}
-  `
-
-  const result = await query(sql, [isNumeric ? Number(param) : param])
-  if (result.rows.length === 0) {
-    res.status(404).json({ error: 'Bounty not found in database' })
-    return
-  }
-
-  res.json({ bounty: result.rows[0] })
-})
-
-// POST /api/bounties - Create or sync bounty record
-const CreateBountySchema = z.object({
-  onchainId: z.number().int().positive().optional(),
-  creatorWallet: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
-  title: z.string().min(3).max(255),
-  description: z.string().min(10),
-  acceptanceCriteria: z.string().min(5),
-  rewardAmount: z.string().regex(/^\d+$/), // string base units (e.g. "2500000")
-  deadline: z.string(), // ISO string or timestamp
-  tags: z.array(z.string()).default([]),
-  links: z.array(z.string()).default([]),
-  txHash: z.string().optional(),
-})
-
-bountiesRouter.post('/', requireAuth, async (req: Request, res: Response) => {
-  const parsed = CreateBountySchema.safeParse(req.body)
-  if (!parsed.success) {
-    res.status(400).json({ error: 'Validation failed', details: parsed.error.issues })
-    return
-  }
-
-  const {
-    onchainId,
-    creatorWallet,
-    title,
-    description,
-    acceptanceCriteria,
-    rewardAmount,
-    deadline,
-    tags,
-    links,
-    txHash,
-  } = parsed.data
-
-  const user = req.user!
-  const normalizedWallet = creatorWallet.toLowerCase()
-
-  // If onchainId provided, optionally verify against Arc Testnet
-  let initialStatus = 0 // Open
-  if (onchainId) {
-    const onchainData = await fetchOnchainBounty(onchainId)
-    if (onchainData) {
-      initialStatus = onchainData.status
-      if (onchainData.creator.toLowerCase() !== normalizedWallet) {
-        console.warn(`[Bounty Save] Onchain creator mismatch for #${onchainId}: expected ${onchainData.creator}, got ${normalizedWallet}`)
+      if (openOnly) where += ` AND b.onchain_status = 1 AND b.deadline > NOW()`
+      if (creator && /^0x[0-9a-f]{40}$/.test(creator)) {
+        params.push(creator)
+        where += ` AND b.creator_wallet = $${params.length}`
       }
-    }
-  }
 
-  if (txHash) {
-    await verifyTxReceipt(txHash)
-  }
+      const tsQuery = toTsQuery(search)
+      if (tsQuery && search) {
+        params.push(tsQuery)
+        const tsIdx = params.length
+        params.push(search.toLowerCase())
+        where += ` AND (b.search_tsv @@ to_tsquery('simple', $${tsIdx}) OR $${params.length} = ANY(b.tags))`
+      }
 
-  const deadlineDate = new Date(deadline)
-
-  const savedBounty = await withTransaction(async (client) => {
-    let result
-    if (onchainId) {
-      result = await client.query(
-        `
-        INSERT INTO bounties (
-          onchain_id,
-          creator_user_id,
-          creator_wallet,
-          title,
-          description,
-          acceptance_criteria,
-          reward_amount,
-          deadline,
-          tags,
-          links,
-          tx_hash,
-          onchain_status,
-          updated_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
-        ON CONFLICT (onchain_id) DO UPDATE SET
-          title = EXCLUDED.title,
-          description = EXCLUDED.description,
-          acceptance_criteria = EXCLUDED.acceptance_criteria,
-          reward_amount = EXCLUDED.reward_amount,
-          deadline = EXCLUDED.deadline,
-          tags = EXCLUDED.tags,
-          links = EXCLUDED.links,
-          tx_hash = COALESCE(EXCLUDED.tx_hash, bounties.tx_hash),
-          onchain_status = EXCLUDED.onchain_status,
-          updated_at = NOW()
-        RETURNING
-          id,
-          onchain_id AS "onchainId",
-          creator_user_id AS "creatorUserId",
-          creator_wallet AS "creatorWallet",
-          title,
-          description,
-          acceptance_criteria AS "acceptanceCriteria",
-          reward_amount::text AS "rewardAmount",
-          token_symbol AS "tokenSymbol",
-          token_address AS "tokenAddress",
-          deadline,
-          tags,
-          links,
-          tx_hash AS "txHash",
-          onchain_status AS "onchainStatus",
-          created_at AS "createdAt",
-          updated_at AS "updatedAt"
-        `,
-        [
-          onchainId,
-          user.id,
-          normalizedWallet,
-          title,
-          description,
-          acceptanceCriteria,
-          rewardAmount,
-          deadlineDate,
-          tags,
-          links,
-          txHash || null,
-          initialStatus,
-        ]
+      params.push(limit, offset)
+      const rows = await query<{ total: string }>(
+        `SELECT ${BOUNTY_LIST_COLUMNS}, COUNT(*) OVER()::text AS total
+           FROM bounties b
+          WHERE ${where}
+          ORDER BY ${sort}
+          LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params,
       )
-    } else {
-      result = await client.query(
-        `
-        INSERT INTO bounties (
-          creator_user_id,
-          creator_wallet,
-          title,
-          description,
-          acceptance_criteria,
-          reward_amount,
-          deadline,
-          tags,
-          links,
-          tx_hash,
-          onchain_status
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        RETURNING
-          id,
-          onchain_id AS "onchainId",
-          creator_user_id AS "creatorUserId",
-          creator_wallet AS "creatorWallet",
-          title,
-          description,
-          acceptance_criteria AS "acceptanceCriteria",
-          reward_amount::text AS "rewardAmount",
-          token_symbol AS "tokenSymbol",
-          token_address AS "tokenAddress",
-          deadline,
-          tags,
-          links,
-          tx_hash AS "txHash",
-          onchain_status AS "onchainStatus",
-          created_at AS "createdAt",
-          updated_at AS "updatedAt"
-        `,
-        [
-          user.id,
-          normalizedWallet,
-          title,
-          description,
-          acceptanceCriteria,
-          rewardAmount,
-          deadlineDate,
-          tags,
-          links,
-          txHash || null,
-          initialStatus,
-        ]
-      )
+      const total = rows.rows[0] ? Number(rows.rows[0].total) : 0
+      const items = rows.rows.map(({ total: _t, ...rest }) => rest)
+      return { items, total }
+    })
+
+    res.setHeader('Cache-Control', 'public, max-age=3, stale-while-revalidate=15')
+    res.json({ ...result, limit, offset })
+  }),
+)
+
+// ---------------------------------------------------------------------------
+// Detail
+// ---------------------------------------------------------------------------
+
+interface DetailRow {
+  id: string
+  creatorWallet: string
+  creatorUserId: string | null
+  moderationStatus: string
+  metadataVerified: boolean
+  moderationNote: string | null
+  [key: string]: unknown
+}
+
+async function loadBountyRow(onchainId: number): Promise<DetailRow | null> {
+  const contract = config.chain.contractAddress
+  if (!contract) return null
+  const res = await query<DetailRow>(
+    `SELECT ${BOUNTY_DETAIL_COLUMNS} ${BOUNTY_DETAIL_FROM} WHERE b.contract_address = $1 AND b.onchain_id = $2`,
+    [contract, onchainId],
+  )
+  return res.rows[0] ?? null
+}
+
+/** Public once approved; creators and admins can always see their view of it. */
+async function canView(req: Request, bounty: DetailRow): Promise<boolean> {
+  if (bounty.moderationStatus === 'approved' && bounty.metadataVerified) return true
+  if (!req.user) return false
+  if (isAdminUser(req.user)) return true
+  if (bounty.creatorUserId === req.user.id) return true
+  const wallet = await getLinkedWallet(req.user.id)
+  return wallet !== null && wallet === bounty.creatorWallet
+}
+
+bountiesRouter.get(
+  '/:id',
+  optionalAuth,
+  route(async (req: Request, res: Response) => {
+    const id = parseOnchainId(req.params.id)
+    const bounty = await loadBountyRow(id)
+    if (!bounty || !(await canView(req, bounty))) throw new HttpError(404, 'Bounty not found')
+
+    const viewerIsOwner = req.user ? bounty.creatorUserId === req.user.id : false
+    const publiclyVisible = bounty.moderationStatus === 'approved'
+    // Moderation notes are only for the creator and admins.
+    const payload = viewerIsOwner || isAdminUser(req.user) ? bounty : { ...bounty, moderationNote: null }
+
+    res.setHeader('Cache-Control', publiclyVisible && !req.user ? 'public, max-age=3, stale-while-revalidate=15' : 'private, no-store')
+    res.json({ bounty: payload })
+  }),
+)
+
+// ---------------------------------------------------------------------------
+// Registering metadata for a bounty created on-chain
+// ---------------------------------------------------------------------------
+
+const CreateBountySchema = BountyMetadataSchema.extend({
+  onchainId: z.number().int().positive().max(2_147_483_647),
+  txHash: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{64}$/)
+    .optional(),
+})
+
+bountiesRouter.post(
+  '/',
+  rateLimit({ windowMs: 60_000, max: 12, key: (req) => req.ip ?? 'anon' }),
+  requireAuth,
+  requireLinkedWallet,
+  route(async (req: Request, res: Response) => {
+    const { onchainId, txHash, ...meta } = parse(CreateBountySchema, req.body)
+    const user = req.user!
+    const wallet = req.wallet!
+
+    const chain = await readBounty(onchainId)
+    if (!chain) throw new HttpError(409, 'Bounty not found on-chain yet. Wait for the transaction to confirm and retry.')
+    if (chain.creator !== wallet) throw new HttpError(403, 'Only the on-chain creator can publish this bounty.')
+    if (chain.title !== meta.title) throw new HttpError(422, 'Title does not match the on-chain bounty.')
+    if (chain.contentHash !== bountyCommitment(meta)) {
+      throw new HttpError(422, 'Description does not match the hash committed on-chain.')
     }
 
-    const bounty = result.rows[0]
+    const rowId = await upsertChainBounty(chain)
 
-    // Log creation activity
-    await client.query(
-      `
-      INSERT INTO bounty_activity (
-        bounty_id,
-        onchain_bounty_id,
-        user_id,
-        actor_wallet,
-        action,
-        description,
-        tx_hash
-      )
-      VALUES ($1, $2, $3, $4, 'created', $5, $6)
-      `,
-      [
-        bounty.id,
-        onchainId || null,
-        user.id,
-        normalizedWallet,
-        `Bounty created: ${title}`,
-        txHash || null,
-      ]
+    const updated = await query(
+      `UPDATE bounties
+          SET description = $2, acceptance_criteria = $3, tags = $4, links = $5,
+              metadata_verified = TRUE, creator_user_id = $6, tx_hash = COALESCE($7, tx_hash), updated_at = NOW()
+        WHERE id = $1 AND (metadata_verified = FALSE OR creator_user_id = $6)
+        RETURNING id`,
+      [rowId, meta.description, meta.acceptanceCriteria, [...new Set(meta.tags)], [...new Set(meta.links)], user.id, txHash ?? null],
     )
+    if (updated.rowCount === 0) throw new HttpError(409, 'This bounty was already published by another account.')
 
-    return bounty
-  })
+    nudgeIndexer()
+    const bounty = await loadBountyRow(onchainId)
+    res.status(201).json({ bounty })
+  }),
+)
 
-  res.status(201).json({
-    success: true,
-    bounty: savedBounty,
-    message: 'Bounty successfully saved and linked to PostgreSQL.',
-  })
+// ---------------------------------------------------------------------------
+// Refresh a bounty from the chain right after a transaction
+// ---------------------------------------------------------------------------
+
+const lastRefresh = new Map<number, number>()
+
+bountiesRouter.post(
+  '/:id/refresh',
+  rateLimit({ windowMs: 60_000, max: 60 }),
+  route(async (req: Request, res: Response) => {
+    const id = parseOnchainId(req.params.id)
+    const now = Date.now()
+    if (now - (lastRefresh.get(id) ?? 0) < 1_500) {
+      res.json({ refreshed: false })
+      return
+    }
+    lastRefresh.set(id, now)
+    if (lastRefresh.size > 2_000) lastRefresh.clear()
+
+    const synced = await syncBounty(id)
+    if (!synced) throw new HttpError(404, 'Bounty not found on-chain')
+    listCache.invalidate()
+    nudgeIndexer()
+    res.json({ refreshed: true, status: synced.chain.status })
+  }),
+)
+
+// ---------------------------------------------------------------------------
+// Submissions
+// ---------------------------------------------------------------------------
+
+bountiesRouter.get(
+  '/:id/submissions',
+  optionalAuth,
+  route(async (req: Request, res: Response) => {
+    const id = parseOnchainId(req.params.id)
+    const bounty = await loadBountyRow(id)
+    if (!bounty || !(await canView(req, bounty))) throw new HttpError(404, 'Bounty not found')
+
+    const rows = await query(
+      `SELECT ${SUBMISSION_COLUMNS}
+         FROM submissions s
+         JOIN bounties b ON b.id = s.bounty_id
+         LEFT JOIN users su ON su.id = COALESCE(s.submitter_user_id, (SELECT user_id FROM wallets WHERE address = s.submitter_wallet))
+        WHERE s.bounty_id = $1
+        ORDER BY s.position NULLS LAST, s.created_at ASC`,
+      [bounty.id],
+    )
+    res.setHeader('Cache-Control', 'private, no-store')
+    res.json({ submissions: rows.rows })
+  }),
+)
+
+const CreateSubmissionSchema = SubmissionMetadataSchema.extend({
+  txHash: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{64}$/)
+    .optional(),
 })
 
-// PUT /api/bounties/:id - Update bounty description / criteria (creator only)
-const UpdateBountySchema = z.object({
-  title: z.string().min(3).max(255).optional(),
-  description: z.string().min(10).optional(),
-  acceptanceCriteria: z.string().min(5).optional(),
-  tags: z.array(z.string()).optional(),
-  links: z.array(z.string()).optional(),
-})
+bountiesRouter.post(
+  '/:id/submissions',
+  rateLimit({ windowMs: 60_000, max: 20 }),
+  requireAuth,
+  requireLinkedWallet,
+  route(async (req: Request, res: Response) => {
+    const id = parseOnchainId(req.params.id)
+    const { txHash, ...meta } = parse(CreateSubmissionSchema, req.body)
+    const user = req.user!
+    const wallet = req.wallet!
 
-bountiesRouter.put('/:id', requireAuth, async (req: Request, res: Response) => {
-  const rawParam = req.params.id
-  const param = Array.isArray(rawParam) ? rawParam[0] : String(rawParam)
-  const isNumeric = /^\d+$/.test(param)
-  const user = req.user!
+    const bounty = await loadBountyRow(id)
+    if (!bounty || bounty.moderationStatus !== 'approved') throw new HttpError(404, 'Bounty not found')
+    if (bounty.creatorWallet === wallet) throw new HttpError(403, 'Creators cannot submit to their own bounty.')
 
-  const parsed = UpdateBountySchema.safeParse(req.body)
-  if (!parsed.success) {
-    res.status(400).json({ error: 'Validation failed', details: parsed.error.issues })
-    return
-  }
+    const onchainHash = await readSubmissionHash(id, wallet)
+    if (!onchainHash) throw new HttpError(409, 'Submit your work on-chain first, then attach the notes.')
+    if (onchainHash !== submissionCommitment(id, meta)) {
+      throw new HttpError(422, 'Notes do not match the hash recorded on-chain.')
+    }
 
-  // Find bounty and verify ownership
-  const findRes = await query(
-    `SELECT b.*, w.address AS linked_wallet
-     FROM bounties b
-     LEFT JOIN wallets w ON w.user_id = $1 AND w.address = b.creator_wallet
-     WHERE ${isNumeric ? 'b.onchain_id = $2' : 'b.id = $2'}`,
-    [user.id, isNumeric ? Number(param) : param]
-  )
+    const saved = await query(
+      `INSERT INTO submissions (bounty_id, submitter_wallet, submitter_user_id, submission_hash, description, pull_request_url, attachments, notes_verified, tx_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, $8)
+       ON CONFLICT (bounty_id, submitter_wallet) DO UPDATE SET
+         submitter_user_id = EXCLUDED.submitter_user_id,
+         submission_hash = EXCLUDED.submission_hash,
+         description = EXCLUDED.description,
+         pull_request_url = EXCLUDED.pull_request_url,
+         attachments = EXCLUDED.attachments,
+         notes_verified = TRUE,
+         tx_hash = COALESCE(submissions.tx_hash, EXCLUDED.tx_hash),
+         updated_at = NOW()
+       WHERE submissions.notes_verified = FALSE
+       RETURNING id`,
+      [bounty.id, wallet, user.id, onchainHash, meta.description, meta.pullRequestUrl, [...new Set(meta.attachments)], txHash ?? null],
+    )
+    if (saved.rowCount === 0) throw new HttpError(409, 'Notes were already attached to this submission.')
 
-  if (findRes.rows.length === 0) {
-    res.status(404).json({ error: 'Bounty not found' })
-    return
-  }
-
-  const bounty = findRes.rows[0]
-
-  // Allow edit if authenticated user is creatorUserId OR has linked the creatorWallet
-  const isOwner = bounty.creator_user_id === user.id || Boolean(bounty.linked_wallet)
-  if (!isOwner) {
-    res.status(403).json({ error: 'Unauthorized: only the bounty creator can update metadata' })
-    return
-  }
-
-  const updates = parsed.data
-  const updateRes = await query(
-    `
-    UPDATE bounties
-    SET
-      title = COALESCE($1, title),
-      description = COALESCE($2, description),
-      acceptance_criteria = COALESCE($3, acceptance_criteria),
-      tags = COALESCE($4, tags),
-      links = COALESCE($5, links),
-      updated_at = NOW()
-    WHERE id = $6
-    RETURNING
-      id,
-      onchain_id AS "onchainId",
-      creator_user_id AS "creatorUserId",
-      creator_wallet AS "creatorWallet",
-      title,
-      description,
-      acceptance_criteria AS "acceptanceCriteria",
-      reward_amount::text AS "rewardAmount",
-      token_symbol AS "tokenSymbol",
-      token_address AS "tokenAddress",
-      deadline,
-      tags,
-      links,
-      tx_hash AS "txHash",
-      onchain_status AS "onchainStatus",
-      created_at AS "createdAt",
-      updated_at AS "updatedAt"
-    `,
-    [
-      updates.title || null,
-      updates.description || null,
-      updates.acceptanceCriteria || null,
-      updates.tags || null,
-      updates.links || null,
-      bounty.id,
-    ]
-  )
-
-  res.json({
-    success: true,
-    bounty: updateRes.rows[0],
-    message: 'Bounty metadata successfully updated.',
-  })
-})
-
-// POST /api/bounties/:id/sync - Synchronize onchain status from Arc Testnet
-bountiesRouter.post('/:id/sync', async (req: Request, res: Response) => {
-  const rawParam = req.params.id
-  const param = Array.isArray(rawParam) ? rawParam[0] : String(rawParam)
-  const isNumeric = /^\d+$/.test(param)
-
-  const findRes = await query<{ id: string; onchain_id: number; onchain_status: number }>(
-    `SELECT id, onchain_id, onchain_status FROM bounties WHERE ${isNumeric ? 'onchain_id = $1' : 'id = $1'}`,
-    [isNumeric ? Number(param) : param]
-  )
-
-  if (findRes.rows.length === 0 || !findRes.rows[0].onchain_id) {
-    res.status(404).json({ error: 'Bounty not found or lacks onchain ID' })
-    return
-  }
-
-  const bounty = findRes.rows[0]
-  const onchainData = await fetchOnchainBounty(bounty.onchain_id)
-
-  if (!onchainData) {
-    res.status(502).json({ error: 'Unable to query Arc Testnet RPC' })
-    return
-  }
-
-  await query(
-    'UPDATE bounties SET onchain_status = $1, updated_at = NOW() WHERE id = $2',
-    [onchainData.status, bounty.id]
-  )
-
-  res.json({
-    success: true,
-    onchainId: bounty.onchain_id,
-    previousStatus: bounty.onchain_status,
-    currentStatus: onchainData.status,
-  })
-})
+    nudgeIndexer()
+    res.status(201).json({ ok: true })
+  }),
+)

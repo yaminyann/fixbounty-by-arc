@@ -1,72 +1,41 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# FixBounty Coolify Deployment & Health Validation Script
-# ==============================================================================
+# Builds and starts the all-in-one stack (docker-compose.yml) and waits until the site answers.
+# For Coolify itself use docker-compose.coolify.yml from the Coolify UI instead.
 set -euo pipefail
 
-echo "=========================================================="
-echo " Starting FixBounty Deployment for Coolify / Docker"
-echo "=========================================================="
-
-# 1. Verify Environment Variables
-echo "[1/4] Validating environment variables..."
-
-REQUIRED_VARS=(
-  "POSTGRES_USER"
-  "POSTGRES_PASSWORD"
-  "POSTGRES_DB"
-  "VITE_FIREBASE_API_KEY"
-  "VITE_FIREBASE_PROJECT_ID"
-  "VITE_BOUNTY_BOARD_ADDRESS"
-)
-
-MISSING=0
-for var in "${REQUIRED_VARS[@]}"; do
-  if [ -z "${!var:-}" ]; then
-    echo "  [WARNING] Variable $var is not set in environment."
-    MISSING=1
-  else
-    echo "  [OK] $var is present."
-  fi
-done
-
-if [ "$MISSING" -eq 1 ]; then
-  echo "[NOTICE] Using standard defaults for unset local variables where applicable."
-fi
-
-# 2. Build and Start Services
-echo "[2/4] Building and starting Docker services..."
-docker compose -f docker-compose.yml up -d --build
-
-# 3. Wait for PostgreSQL and Backend Readiness
-echo "[3/4] Waiting for services to become healthy..."
-MAX_ATTEMPTS=30
-ATTEMPT=0
-
-until curl -s -f http://localhost:4000/health > /dev/null 2>&1 || [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; do
-  ATTEMPT=$((ATTEMPT + 1))
-  echo "  Waiting for backend health check ($ATTEMPT/$MAX_ATTEMPTS)..."
-  sleep 2
-done
-
-if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
-  echo "[ERROR] Backend service failed to become healthy within 60 seconds."
-  docker compose logs backend
+if [ ! -f .env ]; then
+  echo "[ERROR] .env not found. Copy .env.example to .env and fill it in."
   exit 1
 fi
 
-echo "  [OK] Backend API is healthy!"
+set -a
+# shellcheck disable=SC1091
+source .env
+set +a
 
-# 4. Verify Frontend
-echo "[4/4] Verifying Frontend response..."
-if curl -s -f http://localhost:5173/ > /dev/null 2>&1; then
-  echo "  [OK] Frontend is serving on port 5173!"
-elif curl -s -f http://localhost/ > /dev/null 2>&1; then
-  echo "  [OK] Frontend is serving on port 80!"
+REQUIRED_VARS=(POSTGRES_PASSWORD FIREBASE_PROJECT_ID VITE_FIREBASE_API_KEY VITE_FIREBASE_PROJECT_ID VITE_FIREBASE_APP_ID ADMIN_EMAILS TREASURY_ADDRESS)
+for var in "${REQUIRED_VARS[@]}"; do
+  if [ -z "${!var:-}" ]; then
+    echo "[ERROR] $var is not set in .env"
+    exit 1
+  fi
+done
+
+if [ -z "${BOUNTY_BOARD_ADDRESS:-}" ]; then
+  echo "[NOTICE] BOUNTY_BOARD_ADDRESS is empty. The site will run but posting is paused until the contract is deployed."
 fi
 
-echo "=========================================================="
-echo " Deployment Successfully Verified!"
-echo " Backend Health: http://localhost:4000/health"
-echo " Web UI:        http://localhost:5173"
-echo "=========================================================="
+docker compose -f docker-compose.yml up -d --build
+
+echo "Waiting for the site on http://localhost:5173 ..."
+for _ in $(seq 1 60); do
+  if curl -fsS http://localhost:5173/health > /dev/null 2>&1; then
+    echo "[OK] Site and API are healthy."
+    exit 0
+  fi
+  sleep 2
+done
+
+echo "[ERROR] The stack did not become healthy within 2 minutes."
+docker compose -f docker-compose.yml logs --tail=80 backend
+exit 1

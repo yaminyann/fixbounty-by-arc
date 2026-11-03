@@ -1,53 +1,28 @@
-# ==============================================================================
-# Coolify Production Docker Compose Configuration
-# ==============================================================================
-version: '3.8'
-
+# Coolify deployment. The database is the PostgreSQL resource created in Coolify, so there is no
+# postgres service here: set DATABASE_URL to it. In the Coolify resource settings enable
+# "Connect to Predefined Network" so the backend can reach that database by its internal hostname.
 services:
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-fixbounty}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-fixbounty}
-    volumes:
-      - fixbounty_pgdata:/var/lib/postgresql/data
-    networks:
-      - fixbounty-net
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fixbounty} -d ${POSTGRES_DB:-fixbounty}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
     environment:
       NODE_ENV: production
       PORT: 4000
-      DATABASE_URL: postgresql://${POSTGRES_USER:-fixbounty}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-fixbounty}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:?Set FIREBASE_PROJECT_ID}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:?Set ADMIN_EMAILS}
       ARC_RPC_URL: ${ARC_RPC_URL:-https://rpc.testnet.arc.io}
-      BOUNTY_BOARD_ADDRESS: ${VITE_BOUNTY_BOARD_ADDRESS:-0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb}
-      FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-focus-timeer-project}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-fixbounty_admin_2026_arc}
-      ADMIN_SECRET: ${ADMIN_SECRET:-fixbounty_admin_2026_arc}
-      ADMIN_EMAILS: ${ADMIN_EMAILS:-yaminv75@gmail.com,admin@fixbounty.io}
+      CHAIN_ID: ${VITE_ARC_CHAIN_ID:-5042002}
+      EXPLORER_URL: ${VITE_ARC_EXPLORER_URL:-https://explorer.testnet.arc.io}
+      BOUNTY_BOARD_ADDRESS: ${BOUNTY_BOARD_ADDRESS:-}
+      INDEXER_START_BLOCK: ${INDEXER_START_BLOCK:-}
+      USDC_ADDRESS: ${USDC_ADDRESS:-0x3600000000000000000000000000000000000000}
+      TREASURY_ADDRESS: ${TREASURY_ADDRESS:?Set TREASURY_ADDRESS}
     networks:
       - fixbounty-net
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
 
   frontend:
     build:
@@ -57,30 +32,21 @@ services:
         VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY}
         VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN}
         VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID}
-        VITE_FIREBASE_STORAGE_BUCKET: ${VITE_FIREBASE_STORAGE_BUCKET}
-        VITE_FIREBASE_MESSAGING_SENDER_ID: ${VITE_FIREBASE_MESSAGING_SENDER_ID}
+        VITE_FIREBASE_STORAGE_BUCKET: ${VITE_FIREBASE_STORAGE_BUCKET:-}
+        VITE_FIREBASE_MESSAGING_SENDER_ID: ${VITE_FIREBASE_MESSAGING_SENDER_ID:-}
         VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID}
-        VITE_FIREBASE_MEASUREMENT_ID: ${VITE_FIREBASE_MEASUREMENT_ID}
-        VITE_BOUNTY_BOARD_ADDRESS: ${VITE_BOUNTY_BOARD_ADDRESS:-0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb}
-        ARC_RPC_URL: ${ARC_RPC_URL:-https://rpc.testnet.arc.io}
-        VITE_ADMIN_PASSWORD: ${VITE_ADMIN_PASSWORD:-fixbounty_admin_2026_arc}
-        VITE_ADMIN_EMAILS: ${VITE_ADMIN_EMAILS:-yaminv75@gmail.com,admin@fixbounty.io}
+        VITE_FIREBASE_MEASUREMENT_ID: ${VITE_FIREBASE_MEASUREMENT_ID:-}
+        VITE_ARC_RPC_URL: ${VITE_ARC_RPC_URL:-https://rpc.testnet.arc.io}
+        VITE_ARC_CHAIN_ID: ${VITE_ARC_CHAIN_ID:-5042002}
+        VITE_ARC_EXPLORER_URL: ${VITE_ARC_EXPLORER_URL:-https://explorer.testnet.arc.io}
+        VITE_WALLETCONNECT_PROJECT_ID: ${VITE_WALLETCONNECT_PROJECT_ID:-}
+        VITE_API_URL: ${VITE_API_URL:-/api}
     restart: unless-stopped
     depends_on:
       backend:
         condition: service_healthy
     networks:
       - fixbounty-net
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
-volumes:
-  fixbounty_pgdata:
-    name: fixbounty_pgdata
 
 networks:
   fixbounty-net:

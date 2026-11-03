@@ -1,128 +1,93 @@
-# FixBounty — Onchain Bounty Platform with PostgreSQL Backend
+# FixBounty
 
-FixBounty is a decentralized, onchain bounty platform for open-source developers built on **Arc Testnet** with a persistent **PostgreSQL** relational backend, **Docker** containerization, and **Coolify** deployment support.
+An escrow board for open-source bug fixes, built on Arc Testnet. A maintainer locks a USDC prize in a smart contract, contributors submit fixes, the maintainer picks the winners, and each winner claims their share from the contract.
 
-Maintainers post USDC rewards for bug fixes and feature requests; contributors submit pull requests and demo artifacts; creators review and approve the best submission; the approved contributor claims USDC directly from the smart contract.
+## How it works
 
----
+- **Prizes.** A bounty has one to ten prize places. One winner, an equal split, or ranked places such as 50 / 30 / 20. The maintainer can pick fewer winners than places; unused prizes return to the maintainer in the same transaction.
+- **Fees.** 0.5% is added on top of the prize when a bounty is funded. Each winner pays 5% of their own payout when they claim. Every fee goes to the platform wallet set in the contract (`TREASURY_ADDRESS`).
+- **Review.** A bounty is on-chain as soon as it is created, but it only appears on the website after an admin approves it. Admins sign in with Google; there is no admin password.
+- **Identity.** Every action needs a Google account and a wallet linked together by a signed message. A wallet belongs to one account.
+- **Integrity.** The bounty description and each submission are hashed (SHA-256) and the hash is stored on-chain. The server recomputes the hash before accepting text, so the text cannot drift from what the contract committed to.
 
-## Architecture Overview
+## Architecture
 
-- **Blockchain (Authoritative Financial State):** Smart contract on Arc Testnet (Chain ID: `5042002`). Handles escrow, funding, contributor approval, reward claims, and refunds.
-- **Backend (Relational Data & Auth):** Express + TypeScript + `pg` + `viem` + `jose`. Verifies Google Firebase ID tokens, runs ECDSA signature challenges for wallet ownership verification, and stores rich metadata in PostgreSQL.
-- **Database (PostgreSQL 16):** Fully normalized relational schema with ACID transactions, foreign keys, unique constraints, and automated idempotent migrations (`001_initial_schema.sql`).
-- **Frontend (Web Application):** React 18, Vite, TypeScript, Tailwind CSS, React Router v7, wagmi v2, ConnectKit. Neo-Brutalist UI design.
+| Layer | What it does |
+|---|---|
+| `contracts/BountyBoard.sol` | Escrow, prize split, fees, claim and refund rules. No owner or admin functions. |
+| `server/` | Express API on PostgreSQL. A chain indexer mirrors contract state and events into the database, so every page is one indexed query instead of RPC fan-out. Admin moderation, revenue ledger, audit log. |
+| `src/` | React 18, Vite, Tailwind, wagmi v2. Pages are code-split; the wallet picker and Firebase load on demand. |
 
----
+Chain state is authoritative for money, status and winners. PostgreSQL holds the readable text, moderation decisions and a fast copy of chain state.
 
-## Documentation Suite
+## Run it locally
 
-Detailed architecture, security audits, and deployment guides are available in the [`docs/`](docs) directory:
-
-- [Coolify Deployment Guide](docs/COOLIFY_DEPLOYMENT.md) — Step-by-step Coolify deployment, volumes, domains, and health checks.
-- [Architecture Specification](docs/ARCHITECTURE.md) — System design, onchain vs off-chain state, component hierarchy.
-- [Security Model & Audit Report](docs/SECURITY.md) — Threat model, reentrancy analysis, CEI pattern, invariant results.
-- [Testing & Quality Assurance](docs/TESTING.md) — 70 Foundry tests, TypeScript check, Oxlint, and browser test matrices.
-- [Arc Testnet Deployment](docs/TESTNET_DEPLOYMENT.md) — Live contract parameters, verified bytecode, and onchain verification.
-
----
-
-## Quick Start (Local Development)
-
-### 1. Prerequisites
-- [Bun](https://bun.sh) (v1.2+) or Node.js (v20+)
-- [Docker & Docker Compose](https://www.docker.com/)
-- Browser wallet (MetaMask, Rabby, Coinbase Wallet) configured for Arc Testnet
-
-### 2. Start PostgreSQL via Docker
-```bash
-# Start persistent PostgreSQL container
-docker compose -f docker-compose.dev.yml up -d
-
-# Run database migrations
-bun run server:migrate
-```
-
-### 3. Run Backend API Server
-```bash
-# Start Express backend on http://localhost:4000
-bun run server
-```
-
-### 4. Run Frontend Application
-```bash
-# In a separate terminal, start Vite dev server on http://localhost:5173
-bun run dev
-```
-
-The frontend Vite server automatically proxies `/api` requests to `http://localhost:4000`.
-
----
-
-## Full Stack with Docker Compose
-
-To run the entire production-like stack (PostgreSQL, Backend API, and Nginx Frontend) in Docker containers:
+Requires Node 20+ or Bun, Docker, and [Foundry](https://getfoundry.sh).
 
 ```bash
-# Build and start all services
-docker compose up -d --build
-
-# View container status and health
-docker compose ps
-
-# View logs
-docker compose logs -f
-
-# Stop all services (preserves postgres database volume)
-docker compose down
+docker compose -f docker-compose.dev.yml up -d      # PostgreSQL on localhost:5432
+cp .env.example .env                                # fill it in, see below
+bun install
+bun run server                                      # API on :4000, runs migrations, starts the indexer
+bun run dev                                         # web on :5173, proxies /api to :4000
 ```
 
----
+For local work set `DATABASE_URL=postgresql://postgres:devpassword@localhost:5432/fixbounty`.
 
-## Coolify Deployment
+### Environment
 
-FixBounty includes native Coolify deployment support:
+See `.env.example`; every variable is explained there. The ones that need a decision:
 
-- **Compose Configuration:** `docker-compose.coolify.yml`
-- **Validation & Health Script:** `./deploy-coolify.sh`
-- **Full Guide:** [docs/COOLIFY_DEPLOYMENT.md](docs/COOLIFY_DEPLOYMENT.md)
+- `TREASURY_ADDRESS`: wallet that receives all platform fees. It is baked into the contract at deployment.
+- `BOUNTY_BOARD_ADDRESS` and `INDEXER_START_BLOCK`: filled in after you deploy the contract.
+- `FIREBASE_PROJECT_ID`: must equal `VITE_FIREBASE_PROJECT_ID`, because the server verifies ID tokens against it.
+- `ADMIN_EMAILS`: Google accounts allowed into `/admin`. Matched against the verified e-mail on the token.
 
-### Deployment Steps in Coolify:
-1. Create a new Service in Coolify and select **Docker Compose**.
-2. Point Coolify to your repository or paste `docker-compose.coolify.yml`.
-3. Set the Environment Variables (`DATABASE_URL`, `POSTGRES_PASSWORD`, Firebase credentials).
-4. Assign your custom domain with HTTPS enabled.
-5. Deploy! Migrations run automatically before the backend starts serving traffic.
+Only `VITE_` variables reach the browser, and none of them is a secret.
 
----
-
-## Deployed Smart Contract
-
-| Contract | Network | Address | Explorer |
-|---|---|---|---|
-| **BountyBoard** | Arc Testnet (`5042002`) | `0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb` | [Arc Testnet Explorer](https://explorer.testnet.arc.io/address/0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb) |
-
-- **Arc Testnet USDC:** `0x3600000000000000000000000000000000000000` (6 decimals)
-- **Deployment Transaction:** `0xb8a5afdd71d4ea371eec9a5f380049ac26aeb8630afdd9536257cf244084e870`
-- **Claim Grace Period:** 7 days (`CLAIM_GRACE_PERIOD = 604800`)
-
----
-
-## Verification & Test Suite
+## Deploying the contract
 
 ```bash
-# 1. TypeScript compilation check (0 errors)
-bun run typecheck
-
-# 2. Backend TypeScript compilation check (0 errors)
-bun x tsc -p server/tsconfig.json --noEmit
-
-# 3. Smart contract test suite (70 Foundry tests: 62 unit, 7 fuzz, 1 invariant)
-bun run contracts:test
+bun run contracts:test                              # 97 tests: unit, fuzz, invariants
+cast wallet import deployer --interactive           # stores the deployer key in an encrypted keystore
+USDC_ADDRESS=0x3600000000000000000000000000000000000000 \
+TREASURY_ADDRESS=0x378862A20B312298dc54585CbabC531D70F9baE9 \
+forge script contracts/script/DeployBountyBoard.s.sol:DeployBountyBoard \
+  --rpc-url https://rpc.testnet.arc.io --account deployer --broadcast
 ```
 
----
+The script prints the contract address and the deployment block. Put them in `BOUNTY_BOARD_ADDRESS` and `INDEXER_START_BLOCK`, redeploy the backend, and check it:
 
-## License
+```bash
+BOUNTY_BOARD_ADDRESS=0x... TREASURY_ADDRESS=0x... bun run scripts/verify-deployment.ts
+```
 
-MIT
+Never pass a private key on the command line. Fund the deployer from the [Circle faucet](https://faucet.circle.com).
+
+If the ABI changes: `forge build && bun run abi` regenerates `src/lib/bountyBoardAbi.ts` and `server/src/abi.ts`.
+
+## Deploying the site
+
+- **Coolify:** use `docker-compose.coolify.yml`. Create a PostgreSQL resource, set `DATABASE_URL` to it, enable "Connect to Predefined Network" so the backend can reach it, and provide the variables from `.env.example`.
+- **Single machine:** `docker-compose.yml` runs PostgreSQL, the API and nginx together. `./deploy-coolify.sh` validates `.env`, builds, and waits for health.
+
+Migrations run on every start. Tables from the previous contract are kept as `legacy_*` and can be dropped once you no longer need them.
+
+## Tests
+
+```bash
+bun run contracts:test        # Foundry unit, fuzz and invariant tests
+bun run typecheck             # frontend
+node node_modules/typescript/bin/tsc -p server --noEmit
+```
+
+`server/test/e2e.mjs` runs the whole backend against a local chain and a throwaway PostgreSQL: wallet linking, metadata hashing, moderation, multi-winner payouts, fee ledger, indexer, permissions. `server/test/dev-stack.mjs` starts the same stack seeded with sample bounties for browser testing (`vite --mode e2e`). Both use anvil's public test keys and must never touch a real network.
+
+## Admin console
+
+`/admin` (verified Google e-mail on `ADMIN_EMAILS`):
+
+- **Review queue:** pending bounties, with description, creator and prize split. Approve publishes, reject needs a reason.
+- **All bounties, Submissions, Users:** searchable, paginated.
+- **Revenue:** fees collected by type, a 14-day chart, the fee wallet balance read from the chain.
+- **Chain activity, Audit log, System:** raw contract events, every admin decision, and indexer, database and RPC health.

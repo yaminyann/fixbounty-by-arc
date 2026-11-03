@@ -5,171 +5,145 @@ import {BountyBoardTestBase} from "./BountyBoard.Base.t.sol";
 import {BountyBoard} from "../BountyBoard.sol";
 
 contract BountyBoardFuzzTest is BountyBoardTestBase {
-
-    // ----------------------------------------------------------------
-    // testFuzz_CreateBounty_AnyValidInputsSucceed
-    // ----------------------------------------------------------------
-    /// @dev Any non-empty title, non-zero reward, and future deadline
-    ///      must result in a bounty stored correctly.
-    function testFuzz_CreateBounty_AnyValidInputsSucceed(
-        uint256 reward,
-        uint256 deadlineOffset
-    ) public {
-        // constrain inputs
-        reward         = bound(reward, 1, type(uint128).max);
-        deadlineOffset = bound(deadlineOffset, 1, 365 days);
-        uint256 dl = block.timestamp + deadlineOffset;
-
-        usdc.mint(creator, reward);
-
-        vm.prank(creator);
-        uint256 id = board.createBounty("t", "h", reward, dl);
-
-        BountyBoard.Bounty memory b = board.getBounty(id);
-        assertEq(b.reward,   reward);
-        assertEq(b.deadline, dl);
-        assertEq(uint8(b.status), uint8(BountyBoard.BountyStatus.Open));
+    /// @dev Builds a valid non-increasing share list of `n` positions summing to 10_000.
+    function _equalShares(uint256 n) internal pure returns (uint16[] memory s) {
+        s = new uint16[](n);
+        uint256 base = 10_000 / n;
+        uint256 rem = 10_000 - base * n;
+        for (uint256 i; i < n; ++i) {
+            s[i] = uint16(base + (i < rem ? 1 : 0));
+        }
     }
 
-    // ----------------------------------------------------------------
-    // testFuzz_FundBounty_ExactBalanceTransferred
-    // ----------------------------------------------------------------
-    /// @dev Whatever reward amount is set, funding transfers that exact
-    ///      amount from creator to the board.
-    function testFuzz_FundBounty_ExactBalanceTransferred(uint256 reward) public {
-        reward = bound(reward, 1, type(uint128).max);
-
-        // mint what the creator needs
-        usdc.mint(creator, reward);
+    /// @dev Payouts always add up to the reward, whatever the amount and position count.
+    function testFuzz_payoutsSumToReward(uint256 reward, uint8 slotsSeed) public {
+        uint256 n = bound(slotsSeed, 1, 10);
+        reward = bound(reward, 10_000, 1_000_000_000e6);
 
         vm.prank(creator);
-        uint256 id = board.createBounty("t", "h", reward, block.timestamp + 1 days);
+        uint256 id = board.createBounty(TITLE, CONTENT_HASH, reward, deadline, _equalShares(n));
+        (uint16[] memory shares, uint256[] memory payouts) = board.getPrizeStructure(id);
 
-        uint256 creatorBefore = usdc.balanceOf(creator);
-        uint256 boardBefore   = usdc.balanceOf(address(board));
+        uint256 totalShares;
+        uint256 totalPayout;
+        for (uint256 i; i < n; ++i) {
+            totalShares += shares[i];
+            totalPayout += payouts[i];
+            assertGt(payouts[i], 0);
+        }
+        assertEq(totalShares, 10_000);
+        assertEq(totalPayout, reward);
+        if (n > 1) assertGe(payouts[0], payouts[1]);
+    }
 
+    /// @dev Funding moves exactly reward + floor(reward * 0.5%) out of the creator.
+    function testFuzz_fundingChargesExactPostFee(uint256 reward) public {
+        reward = bound(reward, 1, 1_000_000e6);
+        usdc.mint(creator, reward * 2);
+
+        vm.prank(creator);
+        uint256 id = board.createBounty(TITLE, CONTENT_HASH, reward, deadline, _single());
+
+        (uint256 fee, uint256 total) = board.previewFunding(reward);
+        assertEq(fee, (reward * 50) / 10_000);
+        assertEq(total, reward + fee);
+
+        uint256 before = usdc.balanceOf(creator);
         vm.startPrank(creator);
-        usdc.approve(address(board), reward);
+        usdc.approve(address(board), total);
         board.fundBounty(id);
         vm.stopPrank();
 
-        assertEq(usdc.balanceOf(creator),       creatorBefore - reward);
-        assertEq(usdc.balanceOf(address(board)), boardBefore   + reward);
+        assertEq(before - usdc.balanceOf(creator), total);
+        assertEq(usdc.balanceOf(address(board)), reward);
+        assertEq(usdc.balanceOf(treasury), fee);
     }
 
-    // ----------------------------------------------------------------
-    // testFuzz_ClaimReward_ExactAmountReceived
-    // ----------------------------------------------------------------
-    /// @dev After the full flow, the approved contributor receives
-    ///      exactly the reward amount — no rounding, no fee leakage.
-    function testFuzz_ClaimReward_ExactAmountReceived(uint256 reward) public {
-        reward = bound(reward, 1, type(uint128).max);
+    /// @dev Every winner receives gross - 5% and the treasury receives the 5%; nothing is left behind.
+    function testFuzz_claimsConserveFunds(uint256 reward, uint8 slotsSeed, uint8 winnersSeed) public {
+        uint256 slots = bound(slotsSeed, 1, 5);
+        uint256 winnersN = bound(winnersSeed, 1, slots);
+        reward = bound(reward, 10_000, 1_000_000e6);
+        usdc.mint(creator, reward * 2);
 
-        usdc.mint(creator, reward);
-
-        // create + fund
         vm.prank(creator);
-        uint256 id = board.createBounty("t", "h", reward, deadline);
-
+        uint256 id = board.createBounty(TITLE, CONTENT_HASH, reward, deadline, _equalShares(slots));
+        (, uint256 total) = board.previewFunding(reward);
         vm.startPrank(creator);
-        usdc.approve(address(board), reward);
+        usdc.approve(address(board), total);
         board.fundBounty(id);
         vm.stopPrank();
 
-        // submit + approve + claim
+        address[] memory winners = new address[](winnersN);
+        for (uint256 i; i < winnersN; ++i) {
+            winners[i] = address(uint160(0x1000 + i));
+            _submit(id, winners[i]);
+        }
+        _approve(id, winners);
+
+        (, uint256[] memory payouts) = board.getPrizeStructure(id);
+        uint256 treasuryBefore = usdc.balanceOf(treasury);
+        uint256 feeTotal;
+        for (uint256 i; i < winnersN; ++i) {
+            uint256 fee = (payouts[i] * 500) / 10_000;
+            vm.prank(winners[i]);
+            board.claimReward(id);
+            assertEq(usdc.balanceOf(winners[i]), payouts[i] - fee);
+            feeTotal += fee;
+        }
+
+        assertEq(usdc.balanceOf(address(board)), 0);
+        assertEq(uint8(board.getBounty(id).status), uint8(BountyBoard.BountyStatus.Claimed));
+        assertEq(usdc.balanceOf(treasury), treasuryBefore + feeTotal);
+    }
+
+    /// @dev Deadline gates: submissions only through the deadline, refunds only after it.
+    function testFuzz_deadlineGates(uint256 warpBy) public {
+        warpBy = bound(warpBy, 0, 60 days);
+        uint256 id = _createAndFundBounty();
+        vm.warp(block.timestamp + warpBy);
+        bool late = block.timestamp > deadline;
+
         vm.prank(alice);
+        if (late) vm.expectRevert(BountyBoard.DeadlinePassed.selector);
         board.submitWork(id, SUBMISSION_HASH);
 
+        // A late submitter never got in, so a refund after the deadline is immediate.
         vm.prank(creator);
-        board.approveBounty(id, alice);
-
-        uint256 aliceBefore = usdc.balanceOf(alice);
-        vm.prank(alice);
-        board.claimReward(id);
-
-        assertEq(usdc.balanceOf(alice), aliceBefore + reward);
-        // board must be fully drained for that bounty
-        assertEq(usdc.balanceOf(address(board)), 0);
-    }
-
-    // ----------------------------------------------------------------
-    // testFuzz_RefundBounty_ExactAmountReturned
-    // ----------------------------------------------------------------
-    /// @dev After deadline passes, creator gets back the exact reward.
-    function testFuzz_RefundBounty_ExactAmountReturned(uint256 reward) public {
-        reward = bound(reward, 1, type(uint128).max);
-
-        usdc.mint(creator, reward);
-
-        vm.prank(creator);
-        uint256 id = board.createBounty("t", "h", reward, deadline);
-
-        vm.startPrank(creator);
-        usdc.approve(address(board), reward);
-        board.fundBounty(id);
-        vm.stopPrank();
-
-        uint256 creatorBefore = usdc.balanceOf(creator);
-        vm.warp(deadline + 1);
-        vm.prank(creator);
+        if (!late) vm.expectRevert(BountyBoard.DeadlineNotPassed.selector);
         board.refundBounty(id);
-
-        assertEq(usdc.balanceOf(creator),       creatorBefore + reward);
-        assertEq(usdc.balanceOf(address(board)), 0);
     }
 
-    // ----------------------------------------------------------------
-    // testFuzz_CreateBounty_Revert_DeadlineNotFuture
-    // ----------------------------------------------------------------
-    /// @dev Any deadline ≤ block.timestamp must revert with InvalidDeadline.
-    function testFuzz_CreateBounty_Revert_DeadlineNotFuture(uint256 pastTs) public {
-        pastTs = bound(pastTs, 0, block.timestamp);
+    /// @dev The claim window is always measured from approval, never from the deadline.
+    function testFuzz_graceMeasuredFromApproval(uint256 approveDelay, uint256 waitAfter) public {
+        approveDelay = bound(approveDelay, 0, 90 days);
+        waitAfter = bound(waitAfter, 0, 14 days);
+
+        uint256 id = _createAndFundBounty();
+        _submit(id, alice);
+        vm.warp(block.timestamp + approveDelay);
+        _approve(id, _addrs(alice));
+        uint256 approvedAt = block.timestamp;
+
+        vm.warp(approvedAt + waitAfter);
         vm.prank(creator);
-        vm.expectRevert(BountyBoard.InvalidDeadline.selector);
-        board.createBounty("t", "h", 1e6, pastTs);
-    }
-
-    // ----------------------------------------------------------------
-    // testFuzz_RefundAfterApproval_GracePeriodBoundary
-    // ----------------------------------------------------------------
-    /// @dev Refund must succeed only when block.timestamp > deadline + 7 days.
-    function testFuzz_RefundAfterApproval_GracePeriodBoundary(uint256 warpOffset) public {
-        // create, fund, submit, approve at block.timestamp = 1_700_000_000
-        uint256 id = _createFundSubmitApprove();
-
-        // split the fuzz domain: half below boundary, half above
-        uint256 boundary = deadline + CLAIM_GRACE; // inclusive revert boundary
-
-        if (warpOffset % 2 == 0) {
-            // warp to a time that should still revert
-            uint256 warpTo = bound(warpOffset, block.timestamp, boundary);
-            vm.warp(warpTo);
-            vm.prank(creator);
+        if (waitAfter <= CLAIM_GRACE) {
             vm.expectRevert(BountyBoard.GracePeriodNotOver.selector);
-            board.refundAfterApproval(id);
-        } else {
-            // warp to a time after the boundary — must succeed
-            uint256 warpTo = bound(warpOffset, boundary + 1, boundary + 365 days);
-            vm.warp(warpTo);
-            vm.prank(creator);
-            board.refundAfterApproval(id); // must not revert
-            assertEq(
-                uint8(board.getBounty(id).status),
-                uint8(BountyBoard.BountyStatus.Refunded)
-            );
         }
+        board.refundAfterApproval(id);
     }
 
-    // ----------------------------------------------------------------
-    // testFuzz_MultipleBounties_CountMonotonicallyIncreases
-    // ----------------------------------------------------------------
-    /// @dev getBountyCount must equal the number of successful creates.
-    function testFuzz_MultipleBounties_CountMonotonicallyIncreases(uint8 n) public {
-        n = uint8(bound(uint256(n), 1, 20));
-        for (uint256 i = 0; i < n; i++) {
-            vm.prank(creator);
-            board.createBounty("t", "h", 1e6, block.timestamp + 1 days);
-        }
-        assertEq(board.getBountyCount(), n);
+    /// @dev Strangers can never move funds.
+    function testFuzz_strangersCannotAct(address caller) public {
+        vm.assume(caller != creator && caller != alice && caller != address(0));
+        uint256 id = _approvedSingle();
+        vm.startPrank(caller);
+        vm.expectRevert(BountyBoard.NotWinner.selector);
+        board.claimReward(id);
+        vm.expectRevert(BountyBoard.NotCreator.selector);
+        board.refundAfterApproval(id);
+        vm.expectRevert(BountyBoard.NotCreator.selector);
+        board.approveWinners(id, _addrs(alice));
+        vm.stopPrank();
     }
 }

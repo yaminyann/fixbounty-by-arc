@@ -1,110 +1,102 @@
-import { BOUNTY_BOARD_ADDRESS, explorerAddr, TARGET_CHAIN } from '@/lib/contract'
-import { ExternalLink, Shield, Info } from 'lucide-react'
+import { FeeLedger } from '@/components/bounty/FeeLedger'
+import { AddressChip } from '@/components/ui/Address'
+import { PageHeader } from '@/components/ui/Feedback'
+import { useAppConfig } from '@/lib/api/queries'
 
-export function Help() {
+function Rule({ term, children }: { term: string; children: React.ReactNode }) {
   return (
-    <div className="max-w-2xl space-y-10">
-      <div>
-        <h1 className="font-display font-bold text-2xl tracking-tight mb-2">Help & Security Notes</h1>
-        <p className="text-sm text-gray-500">Everything you need to know about FixBounty and how it works onchain.</p>
-      </div>
+    <div className="grid gap-1 border-t border-line py-4 sm:grid-cols-[14rem_1fr] sm:gap-8">
+      <dt className="font-display font-bold">{term}</dt>
+      <dd className="max-w-2xl text-mute">{children}</dd>
+    </div>
+  )
+}
 
-      {/* Network info */}
-      <section id="network">
-        <h2 className="font-bold text-sm uppercase tracking-wider text-gray-400 mb-4">Network & Contract</h2>
-        <div className="border-2 border-black bg-white p-5 space-y-3">
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <p className="text-xs text-gray-400 mb-1">Network</p>
-              <p className="font-medium">{TARGET_CHAIN.name}</p>
-            </div>
-            <div>
-              <p className="text-xs text-gray-400 mb-1">Chain ID</p>
-              <p className="font-mono font-medium tabular-nums">{TARGET_CHAIN.chainId}</p>
-            </div>
-            <div>
-              <p className="text-xs text-gray-400 mb-1">BountyBoard Contract</p>
-              <a
-                href={explorerAddr(BOUNTY_BOARD_ADDRESS)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-mono text-xs hover:underline flex items-center gap-1"
-              >
-                {BOUNTY_BOARD_ADDRESS.slice(0, 10)}…{BOUNTY_BOARD_ADDRESS.slice(-8)}
-                <ExternalLink size={11} />
-              </a>
-            </div>
-            <div>
-              <p className="text-xs text-gray-400 mb-1">USDC Token</p>
-              <p className="font-mono text-xs">0x360000…0000 (6 decimals)</p>
-            </div>
+export default function Help() {
+  const config = useAppConfig()
+  const c = config.data
+
+  return (
+    <div className="max-w-4xl">
+      <PageHeader title="How FixBounty works">
+        The rules the contract enforces and the review step the platform adds. Read this before you post or submit.
+      </PageHeader>
+
+      <section className="space-y-10">
+        <div>
+          <h2 className="mb-3 font-display text-2xl font-bold">Fees</h2>
+          <p className="mb-4 max-w-2xl text-mute">
+            There are two fees. Both are fixed in the contract and paid straight to the platform wallet, so you can verify them on the explorer.
+          </p>
+          <div className="max-w-md rounded-md border-2 border-ink bg-white p-5">
+            <FeeLedger
+              lines={[
+                { label: 'Poster, when funding', value: '0.5% on top of the prize' },
+                { label: 'Winner, when claiming', value: '5% of their payout' },
+              ]}
+            />
           </div>
-          <div className="pt-2 border-t border-gray-100">
-            <p className="text-xs text-yellow-700 bg-yellow-50 border border-yellow-300 px-3 py-2 font-medium">
-              This is a TESTNET deployment. All USDC used here has no real monetary value.
-            </p>
+          <p className="mt-3 max-w-2xl text-sm text-mute">
+            The 0.5% fee is not refunded if the poster later takes the prize back. If a bounty has several winners, each pays 5% of their own share.
+          </p>
+        </div>
+
+        <div>
+          <h2 className="mb-3 font-display text-2xl font-bold">Rules</h2>
+          <dl>
+            <Rule term="Admin approval">
+              Creating and funding a bounty puts it on-chain, but it only appears on the platform after an admin approves it. Until then only the creator and admins can open it. A bounty that is never approved stays on-chain and the creator can reclaim the prize.
+            </Rule>
+            <Rule term="Prize places">
+              A bounty has one to ten prize places. The shares must add up to 100% and a lower place can never win more than a higher one. The creator may pick fewer winners than places, and the unused prizes go back to the creator when winners are approved.
+            </Rule>
+            <Rule term="Submitting">
+              Each wallet can submit once per funded bounty, before the deadline. The text of the submission is hashed and the hash is recorded on-chain, so it cannot be changed after the fact.
+            </Rule>
+            <Rule term="Picking winners">
+              The creator can pick winners at any time after the first submission. Picking is final and closes submissions.
+            </Rule>
+            <Rule term="Claiming">
+              Winners have 7 days from approval to claim. After that the creator can take back anything unclaimed. Winners who already claimed keep their money.
+            </Rule>
+            <Rule term="Reclaiming">
+              With no submissions, the creator can reclaim the prize as soon as the deadline passes. If anyone submitted, the creator must wait a further 7 days so every submission can be reviewed.
+            </Rule>
+            <Rule term="Account and wallet">
+              Every action needs a Google account and a wallet linked together with a signed message. A wallet can belong to one account. The link is free and sends no transaction.
+            </Rule>
+          </dl>
+        </div>
+
+        <div>
+          <h2 className="mb-3 font-display text-2xl font-bold">Trust and limits</h2>
+          <ul className="max-w-2xl list-disc space-y-2 pl-5 text-mute">
+            <li>The contract has no owner and no admin functions. Nobody, including the platform, can move escrowed funds.</li>
+            <li>The contract has not had an independent audit. Use test funds only.</li>
+            <li>The platform admin controls only what is listed on the website. The prize and the winners are decided on-chain.</li>
+            <li>This runs on Arc Testnet. Test USDC has no real value. Get some from the <a className="font-bold underline" href="https://faucet.circle.com" target="_blank" rel="noopener noreferrer">Circle faucet</a>.</li>
+          </ul>
+        </div>
+
+        {c && (
+          <div>
+            <h2 className="mb-3 font-display text-2xl font-bold">Addresses</h2>
+            <dl className="space-y-3 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
+                <dt className="text-mute">Bounty contract</dt>
+                <dd>{c.contractAddress ? <AddressChip address={c.contractAddress} /> : 'Not deployed yet'}</dd>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
+                <dt className="text-mute">Platform fee wallet</dt>
+                <dd><AddressChip address={c.treasuryAddress} /></dd>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
+                <dt className="text-mute">USDC token</dt>
+                <dd><AddressChip address={c.usdcAddress} /></dd>
+              </div>
+            </dl>
           </div>
-        </div>
-      </section>
-
-      {/* Security */}
-      <section id="security">
-        <h2 className="font-bold text-sm uppercase tracking-wider text-gray-400 mb-4 flex items-center gap-2">
-          <Shield size={14} />
-          Security Model
-        </h2>
-        <div className="space-y-3">
-          {[
-            {
-              title: 'Funds held in contract',
-              body: 'When a creator funds a bounty, USDC is transferred to the BountyBoard contract. Neither the creator nor any platform admin can withdraw it freely — only the approved contributor can claim it, or the creator can refund it after the deadline.',
-            },
-            {
-              title: 'No backdoor withdrawal',
-              body: 'The contract has no owner, no admin key, and no emergency drain function. All state transitions are enforced by the contract code.',
-            },
-            {
-              title: 'State machine protections',
-              body: 'Each bounty follows a strict lifecycle: Open → Funded → Approved → Claimed. Double-claims, unauthorized approvals, and invalid transitions are rejected by the contract with custom errors.',
-            },
-            {
-              title: 'Approval is final (with a grace-period escape)',
-              body: 'Once a creator approves a contributor, the creator cannot undo it arbitrarily. However, if the approved contributor does not claim within 7 days after the deadline, the creator can recover the funds via refundAfterApproval.',
-            },
-            {
-              title: 'Off-chain data is not authoritative',
-              body: 'Descriptions, submission notes, and tags are stored in Firestore and PostgreSQL for display and indexing. The authoritative record of reward amounts, approval status, and claim status is always the blockchain.',
-            },
-            {
-              title: 'Firebase identity vs. wallet ownership',
-              body: 'Google sign-in proves app identity (Firebase UID). Wallet ownership is proven by the cryptographic wallet signature on each transaction. FixBounty never conflates the two.',
-            },
-          ].map(({ title, body }) => (
-            <div key={title} className="border-2 border-black bg-white p-4">
-              <p className="font-bold text-sm mb-1.5 flex items-center gap-2">
-                <Shield size={13} className="text-green-600" />
-                {title}
-              </p>
-              <p className="text-sm text-gray-600 leading-relaxed">{body}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* How bounties work */}
-      <section id="how-it-works">
-        <h2 className="font-bold text-sm uppercase tracking-wider text-gray-400 mb-4 flex items-center gap-2">
-          <Info size={14} />
-          How Bounties Work
-        </h2>
-        <div className="border-2 border-black bg-white p-5 text-sm space-y-3 text-gray-700">
-          <p><strong>Creating:</strong> Submit a title, description, reward, and deadline. The bounty is recorded onchain in Open status.</p>
-          <p><strong>Funding:</strong> Approve USDC spending, then call fundBounty. USDC moves from your wallet to the contract. Status changes to Funded.</p>
-          <p><strong>Submitting:</strong> Any connected wallet (except the creator) can submit work while the bounty is Funded and the deadline has not passed. A hash of your description is recorded onchain; your full description goes to the database.</p>
-          <p><strong>Approving:</strong> The creator picks a submission. Only submissions with a recorded onchain hash can be approved. Status changes to Approved.</p>
-          <p><strong>Claiming:</strong> The approved contributor calls claimReward. USDC transfers directly to their wallet. Status changes to Claimed.</p>
-          <p><strong>Refunds:</strong> If the deadline passes with no approval, the creator can refund. If a contributor was approved but never claimed within 7 days after deadline, the creator can also recover funds.</p>
-        </div>
+        )}
       </section>
     </div>
   )

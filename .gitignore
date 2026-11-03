@@ -46,3 +46,6 @@ private_key*
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Server build output
+server/dist/

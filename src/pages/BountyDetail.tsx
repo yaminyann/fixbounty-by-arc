@@ -1,996 +1,324 @@
-import { useParams, Link } from 'react-router-dom'
-import { useEffect, useState } from 'react'
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSwitchChain } from 'wagmi'
-import { erc20Abi } from 'viem'
-import { toast } from 'sonner'
-import {
-  ExternalLink,
-  Clock,
-  User,
-  DollarSign,
-  ArrowLeft,
-  RefreshCw,
-  AlertTriangle,
-  CheckCircle2,
-  Edit3,
-  ShieldCheck,
-  Info,
-} from 'lucide-react'
-import { useBounty } from '@/hooks/useBounty'
-import { StatusBadge } from '@/components/ui/StatusBadge'
-import { NetworkGuard } from '@/components/ui/NetworkGuard'
-import {
-  BountyStatus,
-  formatAddress,
-  timeUntil,
-  timeAgo,
-  parseOnchainError,
-} from '@/lib/bountyTypes'
-import {
-  BOUNTY_BOARD_ADDRESS,
-  BOUNTY_BOARD_ABI,
-  USDC_ADDRESS,
-  TARGET_CHAIN_ID,
-  explorerAddr,
-} from '@/lib/contract'
-import {
-  getBountyMeta,
-  getSubmissionsForBounty,
-  saveSubmissionMeta,
-  saveBountyMeta,
-  logActivity,
-  type BountyMeta,
-  type SubmissionMeta,
-} from '@/lib/firestore'
-import {
-  apiGetBounty,
-  apiGetBountySubmissions,
-  apiCreateSubmission,
-  apiUpdateBounty,
-  apiRecordActivity,
-} from '@/lib/api'
-import { useAuth } from '@/contexts/AuthContext'
+import { Link, useParams } from 'react-router-dom'
+import { ChevronLeft } from 'lucide-react'
+import { RequireIdentity } from '@/components/layout/RequireIdentity'
+import { PrizeLadder } from '@/components/bounty/PrizeLadder'
+import { ModerationBadge, StatusBadge } from '@/components/bounty/StatusBadge'
+import { AddressChip, Avatar, TxLink } from '@/components/ui/Address'
+import { ButtonLink, ExternalLink } from '@/components/ui/Button'
+import { Badge, Callout, EmptyState, ErrorState, Skeleton } from '@/components/ui/Feedback'
+import { FundBounty } from '@/features/bounty/FundBounty'
+import { SelectWinners } from '@/features/bounty/SelectWinners'
+import { ClaimPrize, ReclaimFunds } from '@/features/bounty/Settlement'
+import { SubmitWork } from '@/features/bounty/SubmitWork'
+import { useNow } from '@/hooks/useNow'
+import { useIdentity } from '@/contexts/IdentityContext'
+import { useActivity, useBounty, useSubmissions } from '@/lib/api/queries'
+import { ApiError } from '@/lib/api/client'
+import { Status, type BountyDetail as Bounty, type Submission } from '@/lib/api/types'
+import { describeActivity } from '@/lib/activityText'
+import { formatUsdc, ordinal } from '@/lib/money'
+import { describeStructure } from '@/lib/prize'
+import { formatDate, timeAgo, timeLeft } from '@/lib/time'
 
-export function BountyDetail() {
-  const { id } = useParams<{ id: string }>()
-  const bountyId = Number(id)
-  const { user, signInWithGoogle } = useAuth()
-  const { address, isConnected, chainId } = useAccount()
-  const { switchChain } = useSwitchChain()
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="space-y-3">
+      <h2 className="font-display text-xl font-bold">{title}</h2>
+      {children}
+    </section>
+  )
+}
 
-  const { bounty, isLoading, refetch } = useBounty(bountyId)
-  const [meta, setMeta] = useState<BountyMeta | null>(null)
-  const [submissions, setSubmissions] = useState<SubmissionMeta[]>([])
-  const [submissionText, setSubmissionText] = useState('')
-  const [submissionLinks, setSubmissionLinks] = useState('')
-  const [showSubmitForm, setShowSubmitForm] = useState(false)
+function SubmissionItem({ s, self }: { s: Submission; self: boolean }) {
+  return (
+    <li className="space-y-2 rounded-md border border-line bg-white p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <Avatar name={s.submitterName ?? s.submitterWallet} src={s.submitterPhoto} size={24} />
+          {s.submitterName && <span className="truncate text-sm font-bold">{s.submitterName}</span>}
+          <AddressChip address={s.submitterWallet} self={self} />
+        </div>
+        <div className="flex items-center gap-2">
+          {s.status === 'winner' && <Badge tone="signal">{s.position ? `${ordinal(s.position)} place` : 'Winner'}</Badge>}
+          {s.status === 'not_selected' && <Badge>Not selected</Badge>}
+          <span className="text-xs text-mute">{timeAgo(s.createdAt)}</span>
+        </div>
+      </div>
+      {s.description ? (
+        <>
+          <p className="prose-plain text-sm">{s.description}</p>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+            {s.pullRequestUrl && <ExternalLink href={s.pullRequestUrl}>Pull request</ExternalLink>}
+            {s.attachments.map((url) => (
+              <ExternalLink key={url} href={url}>
+                {new URL(url).hostname}
+              </ExternalLink>
+            ))}
+          </div>
+        </>
+      ) : (
+        <p className="text-sm text-mute">Recorded on-chain. The contributor has not attached their notes yet.</p>
+      )}
+    </li>
+  )
+}
 
-  // Creator metadata editing state (for bounties needing off-chain description)
-  const [editingMeta, setEditingMeta] = useState(false)
-  const [metaForm, setMetaForm] = useState({
-    description: '',
-    acceptanceCriteria: '',
-    tags: '',
-  })
-  const [savingMeta, setSavingMeta] = useState(false)
+function History({ onchainId }: { onchainId: number }) {
+  const activity = useActivity({ bountyId: onchainId, limit: 30 })
+  const items = activity.data?.items ?? []
+  if (items.length === 0) return <p className="text-sm text-mute">On-chain events appear here a few seconds after each transaction.</p>
+  return (
+    <ol className="divide-y divide-line rounded-md border border-line bg-white">
+      {items.map((a) => (
+        <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-sm">
+          <span>{describeActivity(a)}</span>
+          <span className="flex items-center gap-3 text-xs text-mute">
+            {timeAgo(a.time)}
+            <TxLink hash={a.txHash} />
+          </span>
+        </li>
+      ))}
+    </ol>
+  )
+}
 
-  const reloadOffChainData = async () => {
-    if (!bountyId) return
-    try {
-      // 1. Load from PostgreSQL backend
-      const [apiBounty, apiSubs] = await Promise.all([
-        apiGetBounty(bountyId),
-        apiGetBountySubmissions(bountyId),
-      ])
+function ActionPanel({ bounty, submissions, now }: { bounty: Bounty; submissions: Submission[]; now: number }) {
+  const id = useIdentity()
+  const me = id.status === 'ready' ? id.address!.toLowerCase() : null
+  const isCreator = me === bounty.creatorWallet
+  const winnerIndex = me ? bounty.winners.indexOf(me) : -1
+  const mySubmission = me ? submissions.find((s) => s.submitterWallet === me) : undefined
+  const open = new Date(bounty.deadline).getTime() > now
 
-      if (apiBounty) {
-        setMeta({
-          bountyId,
-          creatorUid: apiBounty.creatorUserId || 'anonymous',
-          creatorAddress: apiBounty.creatorWallet,
-          description: apiBounty.description,
-          acceptanceCriteria: apiBounty.acceptanceCriteria,
-          tags: apiBounty.tags,
-          links: apiBounty.links,
-        })
-        setMetaForm({
-          description: apiBounty.description,
-          acceptanceCriteria: apiBounty.acceptanceCriteria,
-          tags: apiBounty.tags.join(', '),
-        })
-      } else {
-        // Fallback to Firestore and local cache
-        const m = await getBountyMeta(bountyId)
-        setMeta(m)
-        if (m) {
-          setMetaForm({
-            description: m.description,
-            acceptanceCriteria: m.acceptanceCriteria,
-            tags: m.tags.join(', '),
-          })
-        }
-      }
+  const content = (() => {
+    if (bounty.status === Status.Claimed) return <p className="text-sm text-mute">Every prize was claimed. This bounty is complete.</p>
+    if (bounty.status === Status.Refunded) return <p className="text-sm text-mute">The creator took back the prize, so this bounty is closed.</p>
+    if (bounty.status === Status.Cancelled) return <p className="text-sm text-mute">This bounty was cancelled.</p>
+    if (!me) return null
+    if (bounty.status === Status.Open) {
+      return isCreator ? <FundBounty bounty={bounty} /> : <p className="text-sm text-mute">The creator has not funded this bounty yet.</p>
+    }
 
-      if (apiSubs.submissions && apiSubs.submissions.length > 0) {
-        setSubmissions(
-          apiSubs.submissions.map((s) => ({
-            bountyId,
-            contributorUid: s.submitterUserId || 'unknown',
-            contributorAddress: s.submitterWallet,
-            submissionHash: s.txHash || '',
-            description: s.description,
-            links: s.attachments && s.attachments.length > 0 ? s.attachments : [s.pullRequestUrl],
-            submittedAt: s.createdAt,
-            status: s.status,
-          }))
+    if (bounty.status === Status.Funded) {
+      if (isCreator) {
+        return (
+          <div className="space-y-6">
+            <SelectWinners bounty={bounty} submissions={submissions} />
+            {!open && (
+              <div className="border-t border-line pt-5">
+                <ReclaimFunds bounty={bounty} submissionCount={bounty.submissionCount} now={now} />
+              </div>
+            )}
+          </div>
         )
-      } else {
-        const subs = await getSubmissionsForBounty(bountyId)
-        setSubmissions(subs)
       }
-    } catch (err) {
-      console.error('[BountyDetail] Error loading metadata:', err)
-    }
-  }
-
-  const handleSaveMetadata = async () => {
-    if (!bountyId) return
-    setSavingMeta(true)
-    try {
-      const tagsArray = metaForm.tags.split(',').map((t) => t.trim()).filter(Boolean)
-
-      // 1. Persist directly to PostgreSQL
-      await apiUpdateBounty(bountyId, {
-        description: metaForm.description,
-        acceptanceCriteria: metaForm.acceptanceCriteria,
-        tags: tagsArray,
-      }).catch((e) => console.warn('[BountyDetail] PostgreSQL update error:', e))
-
-      // 2. Persist to Firestore & local storage
-      await saveBountyMeta(bountyId, {
-        creatorUid: user?.uid ?? 'anonymous',
-        creatorAddress: address?.toLowerCase() ?? bounty?.creator.toLowerCase(),
-        description: metaForm.description,
-        acceptanceCriteria: metaForm.acceptanceCriteria,
-        tags: tagsArray,
-      })
-
-      setMeta({
-        bountyId,
-        creatorUid: user?.uid ?? 'anonymous',
-        creatorAddress: address?.toLowerCase() ?? bounty?.creator.toLowerCase(),
-        description: metaForm.description,
-        acceptanceCriteria: metaForm.acceptanceCriteria,
-        tags: tagsArray,
-      })
-      setEditingMeta(false)
-      toast.success('Bounty details saved and synchronized!')
-    } catch (err) {
-      toast.error('Failed to save metadata: ' + (err as Error).message)
-    } finally {
-      setSavingMeta(false)
-    }
-  }
-
-  useEffect(() => {
-    void reloadOffChainData()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bountyId])
-
-  // Submit work
-  const { writeContract: submitWrite, data: submitHash, isPending: submitPending } = useWriteContract()
-  const { isLoading: submitConfirming, isSuccess: submitSuccess } = useWaitForTransactionReceipt({ hash: submitHash })
-
-  // Approve
-  const { writeContract: approveWrite, data: approveHash, isPending: approvePending } = useWriteContract()
-  const { isLoading: approveConfirming, isSuccess: approveSuccess } = useWaitForTransactionReceipt({ hash: approveHash })
-
-  // Claim
-  const { writeContract: claimWrite, data: claimHash, isPending: claimPending } = useWriteContract()
-  const { isLoading: claimConfirming, isSuccess: claimSuccess } = useWaitForTransactionReceipt({ hash: claimHash })
-
-  // Refund (funded + expired)
-  const { writeContract: refundWrite, data: refundHash, isPending: refundPending } = useWriteContract()
-  const { isLoading: refundConfirming, isSuccess: refundSuccess } = useWaitForTransactionReceipt({ hash: refundHash })
-
-  // RefundAfterApproval
-  const { writeContract: refundApprovalWrite, data: refundApprovalHash, isPending: refundApprovalPending } = useWriteContract()
-  const { isLoading: refundApprovalConfirming, isSuccess: refundApprovalSuccess } = useWaitForTransactionReceipt({ hash: refundApprovalHash })
-
-  // Fund open bounty
-  const { writeContract: usdcApproveWrite, isPending: usdcApprovePending } = useWriteContract()
-  const { writeContract: fundWrite, data: fundHash, isPending: fundPending } = useWriteContract()
-  const { isLoading: fundConfirming, isSuccess: fundSuccess } = useWaitForTransactionReceipt({ hash: fundHash })
-
-  useEffect(() => {
-    if (submitSuccess || approveSuccess || claimSuccess || refundSuccess || refundApprovalSuccess || fundSuccess) {
-      void refetch()
-      void reloadOffChainData()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [submitSuccess, approveSuccess, claimSuccess, refundSuccess, refundApprovalSuccess, fundSuccess])
-
-  const isCreator = Boolean(
-    bounty && address && bounty.creator.toLowerCase() === address.toLowerCase()
-  )
-  const isApproved = Boolean(
-    bounty && address && bounty.approvedContributor.toLowerCase() === address.toLowerCase()
-  )
-
-  const canSubmit =
-    bounty &&
-    isConnected &&
-    !isCreator &&
-    bounty.status === BountyStatus.Funded &&
-    !bounty.isExpired
-
-  const canApprove =
-    bounty &&
-    isCreator &&
-    bounty.status === BountyStatus.Funded
-
-  const canClaim =
-    bounty &&
-    isApproved &&
-    bounty.status === BountyStatus.Approved
-
-  const canRefund =
-    bounty &&
-    isCreator &&
-    bounty.status === BountyStatus.Funded &&
-    bounty.isExpired
-
-  const canRefundAfterApproval =
-    bounty &&
-    isCreator &&
-    bounty.status === BountyStatus.Approved
-
-  const GRACE = 7 * 24 * 3600 // 7 days in seconds
-  const graceCutoff = bounty ? new Date(bounty.deadline.getTime() + GRACE * 1000) : null
-  const graceExpired = graceCutoff ? graceCutoff < new Date() : false
-
-  const checkChain = () => {
-    if (chainId !== TARGET_CHAIN_ID) {
-      switchChain({ chainId: TARGET_CHAIN_ID })
-      return false
-    }
-    return true
-  }
-
-  // Handle Contributor Submission
-  const handleSubmit = () => {
-    if (!user) {
-      toast.error('Please sign in with Google first.')
-      return
-    }
-    if (!checkChain() || !bounty || !address) return
-    if (!submissionText.trim()) {
-      toast.error('Please describe your work.')
-      return
+      if (!open) return <p className="text-sm text-mute">The deadline has passed, so new submissions are closed. The creator is reviewing.</p>
+      if (mySubmission?.notesVerified) {
+        return <Callout tone="ok" title="You have submitted">The creator will pick winners. You can follow the bounty here.</Callout>
+      }
+      return <SubmitWork onchainId={bounty.onchainId} wallet={me} alreadySubmittedOnChain={Boolean(mySubmission)} />
     }
 
-    const contentHash = `sha256:${btoa(unescape(encodeURIComponent(submissionText))).slice(0, 32)}`
-    submitWrite({
-      address: BOUNTY_BOARD_ADDRESS,
-      abi: BOUNTY_BOARD_ABI,
-      functionName: 'submitWork',
-      args: [BigInt(bountyId), contentHash],
-    }, {
-      onSuccess: (hash) => {
-        toast.success('Work submitted onchain!')
-        setShowSubmitForm(false)
+    if (bounty.status === Status.Approved) {
+      if (winnerIndex >= 0) {
+        return bounty.winnersClaimed[winnerIndex] ? (
+          <Callout tone="ok" title="You claimed your prize">The USDC is in your wallet.</Callout>
+        ) : (
+          <ClaimPrize bounty={bounty} position={winnerIndex + 1} />
+        )
+      }
+      if (isCreator) return <ReclaimFunds bounty={bounty} submissionCount={bounty.submissionCount} now={now} />
+      return <p className="text-sm text-mute">Winners have been picked and are claiming their prizes.</p>
+    }
 
-        void (async () => {
-          // 1. Persist directly to PostgreSQL
-          await apiCreateSubmission(bountyId, {
-            submitterWallet: address.toLowerCase(),
-            description: submissionText,
-            pullRequestUrl: submissionLinks.split('\n')[0]?.trim() || 'https://github.com',
-            attachments: submissionLinks.split('\n').map((l) => l.trim()).filter(Boolean),
-            txHash: hash,
-          }).catch((e) => console.warn('[BountyDetail] PostgreSQL submission warning:', e))
+    return null
+  })()
 
-          // 2. Persist to Firestore fallback
-          void saveSubmissionMeta({
-            bountyId,
-            contributorUid: user.uid,
-            contributorAddress: address.toLowerCase(),
-            submissionHash: contentHash,
-            description: submissionText,
-            links: submissionLinks.split('\n').map((l) => l.trim()).filter(Boolean),
-          })
+  const actionable = bounty.status === Status.Open || bounty.status === Status.Funded || bounty.status === Status.Approved
+  if (!actionable) return content
+  return <RequireIdentity purpose="take part in this bounty">{content}</RequireIdentity>
+}
 
-          // 3. Record in PostgreSQL activity table
-          void apiRecordActivity({
-            onchainId: bountyId,
-            action: 'submitted',
-            actorWallet: address,
-            description: `Work submitted by ${formatAddress(address)}`,
-            txHash: hash,
-          })
+export default function BountyDetail() {
+  const params = useParams()
+  const onchainId = /^[1-9]\d{0,9}$/.test(params.id ?? '') ? Number(params.id) : undefined
+  const query = useBounty(onchainId)
+  const submissionsQuery = useSubmissions(onchainId, query.isSuccess)
+  const id = useIdentity()
+  const now = useNow()
 
-          setSubmissionText('')
-          setSubmissionLinks('')
-          void reloadOffChainData()
-        })()
-      },
-      onError: (err) => toast.error(parseOnchainError(err)),
-    })
+  if (onchainId === undefined) {
+    return <EmptyState title="That is not a valid bounty link" action={<ButtonLink to="/explore" variant="primary">Back to bounties</ButtonLink>} />
   }
 
-  // Handle Creator Approval
-  const handleApproveContributor = (contributorAddress: string) => {
-    if (!checkChain()) return
-    approveWrite({
-      address: BOUNTY_BOARD_ADDRESS,
-      abi: BOUNTY_BOARD_ABI,
-      functionName: 'approveBounty',
-      args: [BigInt(bountyId), contributorAddress as `0x${string}`],
-    }, {
-      onSuccess: (hash) => {
-        toast.success(`Approved ${formatAddress(contributorAddress)} for reward payout!`)
-        if (address) {
-          void apiRecordActivity({
-            onchainId: bountyId,
-            action: 'approved',
-            actorWallet: address,
-            description: `${formatAddress(contributorAddress)} approved for payout`,
-            txHash: hash,
-          })
-          void logActivity({
-            bountyId,
-            type: 'approved',
-            actorAddress: address,
-            txHash: hash,
-            message: `${formatAddress(contributorAddress)} approved for payout`,
-          })
-        }
-      },
-      onError: (err) => toast.error(parseOnchainError(err)),
-    })
-  }
-
-  // Handle Contributor Claim
-  const handleClaim = () => {
-    if (!checkChain()) return
-    claimWrite({
-      address: BOUNTY_BOARD_ADDRESS,
-      abi: BOUNTY_BOARD_ABI,
-      functionName: 'claimReward',
-      args: [BigInt(bountyId)],
-    }, {
-      onSuccess: (hash) => {
-        toast.success(`Reward claimed! ${bounty?.rewardFormatted} USDC sent to your wallet.`)
-        if (address) {
-          void apiRecordActivity({
-            onchainId: bountyId,
-            action: 'claimed',
-            actorWallet: address,
-            description: `Reward claimed by ${formatAddress(address)}`,
-            txHash: hash,
-          })
-          void logActivity({
-            bountyId,
-            type: 'claimed',
-            actorAddress: address,
-            txHash: hash,
-            message: `Reward claimed by ${formatAddress(address)}`,
-          })
-        }
-      },
-      onError: (err) => toast.error(parseOnchainError(err)),
-    })
-  }
-
-  // Handle Creator Refund
-  const handleRefund = () => {
-    if (!checkChain()) return
-    refundWrite({
-      address: BOUNTY_BOARD_ADDRESS,
-      abi: BOUNTY_BOARD_ABI,
-      functionName: 'refundBounty',
-      args: [BigInt(bountyId)],
-    }, {
-      onSuccess: (hash) => {
-        toast.success('Bounty refunded. Locked USDC returned to your wallet.')
-        if (address) {
-          void logActivity({
-            bountyId,
-            type: 'refunded',
-            actorAddress: address,
-            txHash: hash,
-            message: `Bounty #${bountyId} refunded`,
-          })
-        }
-      },
-      onError: (err) => toast.error(parseOnchainError(err)),
-    })
-  }
-
-  // Handle Creator Refund after 7-day grace period
-  const handleRefundAfterApproval = () => {
-    if (!checkChain()) return
-    refundApprovalWrite({
-      address: BOUNTY_BOARD_ADDRESS,
-      abi: BOUNTY_BOARD_ABI,
-      functionName: 'refundAfterApproval',
-      args: [BigInt(bountyId)],
-    }, {
-      onSuccess: (hash) => {
-        toast.success('Funds recovered after approval grace period elapsed.')
-        if (address) {
-          void logActivity({
-            bountyId,
-            type: 'refunded',
-            actorAddress: address,
-            txHash: hash,
-            message: `Bounty #${bountyId} refunded after approval grace period`,
-          })
-        }
-      },
-      onError: (err) => toast.error(parseOnchainError(err)),
-    })
-  }
-
-  // Fund open bounty flow
-  const handleFundOpen = () => {
-    if (!bounty || !checkChain()) return
-    usdcApproveWrite({
-      address: USDC_ADDRESS,
-      abi: erc20Abi,
-      functionName: 'approve',
-      args: [BOUNTY_BOARD_ADDRESS, bounty.reward],
-    }, {
-      onSuccess: () => {
-        toast.success('USDC approved! Now confirming escrow deposit…')
-        fundWrite({
-          address: BOUNTY_BOARD_ADDRESS,
-          abi: BOUNTY_BOARD_ABI,
-          functionName: 'fundBounty',
-          args: [BigInt(bountyId)],
-        }, {
-          onSuccess: (hash) => {
-            toast.success('Bounty funded and active!')
-            if (address) {
-              void logActivity({
-                bountyId,
-                type: 'funded',
-                actorAddress: address,
-                txHash: hash,
-                message: `Bounty #${bountyId} funded`,
-              })
-            }
-          },
-          onError: (err) => toast.error(parseOnchainError(err)),
-        })
-      },
-      onError: (err) => toast.error(parseOnchainError(err)),
-    })
-  }
-
-  if (isLoading) {
+  if (query.isPending) {
     return (
-      <div className="space-y-4">
-        <div className="h-8 w-48 bg-gray-200 animate-pulse border-2 border-black" />
-        <div className="h-64 bg-gray-100 animate-pulse border-2 border-black" />
+      <div className="grid gap-10 lg:grid-cols-[1fr_22rem]" aria-busy>
+        <div className="space-y-4">
+          <Skeleton className="h-6 w-40" />
+          <Skeleton className="h-12 w-3/4" />
+          <Skeleton className="h-40 w-full" />
+        </div>
+        <Skeleton className="h-80 w-full" />
       </div>
     )
   }
 
-  if (!bounty) {
-    return (
-      <div className="border-2 border-black p-10 text-center bg-white shadow-[6px_6px_0px_black] space-y-3">
-        <AlertTriangle size={36} className="mx-auto text-yellow-500" />
-        <h2 className="font-display font-bold text-xl">Bounty not found</h2>
-        <p className="text-sm text-gray-500">
-          No bounty with ID #{bountyId} exists on Arc Testnet contract.
-        </p>
-        <Link
-          to="/explore"
-          className="inline-flex items-center gap-2 border-2 border-black bg-black text-white px-4 py-2 font-bold text-sm hover:bg-yellow-300 hover:text-black transition-colors"
+  if (query.isError) {
+    if (query.error instanceof ApiError && query.error.status === 404) {
+      return (
+        <EmptyState
+          title="This bounty is not available"
+          action={<ButtonLink to="/explore" variant="primary">Browse bounties</ButtonLink>}
         >
-          <ArrowLeft size={16} /> Back to Explorer
-        </Link>
-      </div>
-    )
+          It may not exist, or it is still waiting for admin approval and only visible to its creator.
+        </EmptyState>
+      )
+    }
+    return <ErrorState title="The bounty did not load" message="Check your connection and try again." onRetry={() => void query.refetch()} />
   }
+
+  const bounty = query.data
+  const submissions = submissionsQuery.data ?? []
+  const me = id.status === 'ready' ? id.address!.toLowerCase() : null
+  const reward = BigInt(bounty.rewardAmount)
+  const payouts = bounty.prizePayouts
 
   return (
-    <div className="max-w-3xl space-y-6">
-      {/* Top Bar */}
-      <div className="flex items-center gap-3">
-        <Link
-          to="/explore"
-          className="border-2 border-black p-2 bg-white hover:bg-yellow-300 transition-colors shadow-[2px_2px_0px_black]"
-          title="Back to bounties"
-        >
-          <ArrowLeft size={16} />
-        </Link>
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-mono font-bold bg-yellow-300 px-2 py-0.5 border border-black">
-              #{bounty.id}
-            </span>
-            <h1 className="font-display font-bold text-xl sm:text-2xl tracking-tight">
-              {bounty.title}
-            </h1>
-          </div>
+    <article className="space-y-8">
+      <Link to="/explore" className="inline-flex items-center gap-1 text-sm font-bold text-mute hover:text-ink">
+        <ChevronLeft size={16} aria-hidden /> All bounties
+      </Link>
+
+      {bounty.moderationStatus === 'pending' && (
+        <Callout tone="warn" title="Waiting for admin approval">
+          Only you and the admins can see this page. It will appear on the platform once an admin approves it.
+        </Callout>
+      )}
+      {bounty.moderationStatus === 'rejected' && (
+        <Callout tone="danger" title="This bounty was not approved">
+          {bounty.moderationNote ?? 'An admin rejected it.'} The prize stays in the contract. Contact the team if you think this is a mistake.
+        </Callout>
+      )}
+      {!bounty.metadataVerified && (
+        <Callout tone="warn" title="The description has not been published">
+          The bounty exists on-chain, but its text was never attached.
+        </Callout>
+      )}
+
+      <header className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusBadge status={bounty.status} deadline={bounty.deadline} now={now} />
+          {bounty.moderationStatus !== 'approved' && <ModerationBadge status={bounty.moderationStatus} />}
+          <span className="num text-sm text-mute">Bounty #{bounty.onchainId}</span>
         </div>
-        <button
-          onClick={() => {
-            void refetch()
-            void reloadOffChainData()
-            toast.info('Bounty refreshed.')
-          }}
-          className="ml-auto border-2 border-black p-2 bg-white hover:bg-yellow-300 transition-colors shadow-[2px_2px_0px_black]"
-          title="Refresh onchain state"
-        >
-          <RefreshCw size={16} />
-        </button>
-      </div>
-
-      {/* Main Info Card */}
-      <div className="border-2 border-black bg-white shadow-[6px_6px_0px_black] p-6 space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b-2 border-gray-100 pb-4">
-          <div className="flex items-center gap-3">
-            <StatusBadge status={bounty.status} />
-            <span className="text-base font-bold text-green-700 flex items-center gap-1 tabular-nums">
-              <DollarSign size={16} />
-              {bounty.rewardFormatted} USDC
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1.5 text-xs text-gray-500 font-medium">
-            <Clock size={14} />
-            <span>{bounty.isExpired ? 'Expired' : timeUntil(bounty.deadline)}</span>
-          </div>
-        </div>
-
-        {/* Parameters Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs sm:text-sm">
-          <div>
-            <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Creator Wallet</span>
-            <div className="flex items-center gap-1.5 mt-1">
-              <a
-                href={explorerAddr(bounty.creator)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-mono text-xs hover:underline flex items-center gap-1 text-black font-medium"
-              >
-                {bounty.creator} <ExternalLink size={11} />
-              </a>
-              {isCreator && (
-                <span className="bg-yellow-300 border border-black text-[10px] font-bold px-1.5 py-0.2">
-                  You
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div>
-            <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Deadline</span>
-            <p className="mt-1 font-medium text-gray-900">
-              {bounty.deadline.toLocaleDateString()} at {bounty.deadline.toLocaleTimeString()}
-            </p>
-          </div>
-
-          {bounty.fundedAt && (
-            <div>
-              <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Escrow Funded</span>
-              <p className="mt-1 text-gray-800">{timeAgo(bounty.fundedAt)}</p>
-            </div>
-          )}
-
-          {bounty.approvedContributor !== '0x0000000000000000000000000000000000000000' && (
-            <div>
-              <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Approved Contributor</span>
-              <div className="flex items-center gap-1.5 mt-1">
-                <a
-                  href={explorerAddr(bounty.approvedContributor)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-mono text-xs hover:underline flex items-center gap-1 text-green-700 font-bold"
-                >
-                  {formatAddress(bounty.approvedContributor)} <ExternalLink size={11} />
-                </a>
-                {isApproved && (
-                  <span className="bg-green-300 border border-black text-[10px] font-bold px-1.5 py-0.2">
-                    You
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Contract Link */}
-        <div className="border-t-2 border-gray-100 pt-3 flex items-center justify-between text-xs text-gray-500">
-          <span className="font-mono text-[11px]">
-            Contract: {formatAddress(BOUNTY_BOARD_ADDRESS)}
+        <h1 className="max-w-4xl font-display text-3xl font-bold leading-tight sm:text-4xl">{bounty.title}</h1>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-mute">
+          <span className="inline-flex items-center gap-2">
+            Posted by
+            {bounty.creatorName && <span className="font-bold text-ink">{bounty.creatorName}</span>}
+            <AddressChip address={bounty.creatorWallet} self={me === bounty.creatorWallet} />
           </span>
-          <a
-            href={explorerAddr(BOUNTY_BOARD_ADDRESS)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-black underline flex items-center gap-1"
-          >
-            Arc Explorer <ExternalLink size={10} />
-          </a>
+          <span>{formatDate(bounty.createdAt)}</span>
         </div>
-      </div>
+        <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 rounded-md border-2 border-ink bg-white p-4 lg:hidden">
+          <p className="num font-display text-2xl font-bold">{formatUsdc(reward)} USDC</p>
+          <p className="text-sm text-mute">{describeStructure(bounty.prizeShares)}</p>
+          <p className="text-sm font-bold">{timeLeft(bounty.deadline, now)}</p>
+        </div>
+        {bounty.tags.length > 0 && (
+          <ul className="flex flex-wrap gap-1.5">
+            {bounty.tags.map((t) => (
+              <li key={t} className="rounded bg-line/70 px-2 py-0.5 text-xs font-medium">
+                {t}
+              </li>
+            ))}
+          </ul>
+        )}
+      </header>
 
-      {/* Description & Acceptance Criteria Section */}
-      <div className="border-2 border-black bg-white p-6 shadow-[4px_4px_0px_black] space-y-5">
-        <div className="flex items-center justify-between">
-          <h2 className="font-bold text-sm uppercase tracking-wider text-gray-500">
-            Task Description & Requirements
-          </h2>
-          {isCreator && !editingMeta && (
-            <button
-              onClick={() => setEditingMeta(true)}
-              className="inline-flex items-center gap-1 text-xs font-bold border-2 border-black px-2.5 py-1 hover:bg-yellow-300 transition-colors"
-            >
-              <Edit3 size={12} /> {meta ? 'Edit Description' : 'Add Description'}
-            </button>
+      <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="min-w-0 space-y-10">
+          {bounty.description && (
+            <Section title="The problem">
+              <p className="prose-plain">{bounty.description}</p>
+            </Section>
           )}
-        </div>
-
-        {editingMeta ? (
-          <div className="space-y-4 border-2 border-dashed border-black p-4 bg-yellow-50">
-            <div>
-              <label className="block text-xs font-bold mb-1">Description (Markdown / Text)</label>
-              <textarea
-                rows={5}
-                value={metaForm.description}
-                onChange={(e) => setMetaForm({ ...metaForm, description: e.target.value })}
-                className="w-full border-2 border-black p-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-300"
-                placeholder="Describe the issue, repository URL, reproduction steps…"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold mb-1">Acceptance Criteria</label>
-              <textarea
-                rows={3}
-                value={metaForm.acceptanceCriteria}
-                onChange={(e) => setMetaForm({ ...metaForm, acceptanceCriteria: e.target.value })}
-                className="w-full border-2 border-black p-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-300"
-                placeholder="What counts as an acceptable pull request or fix?"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold mb-1">Tags (comma-separated)</label>
-              <input
-                type="text"
-                value={metaForm.tags}
-                onChange={(e) => setMetaForm({ ...metaForm, tags: e.target.value })}
-                className="w-full border-2 border-black p-2 text-sm focus:outline-none"
-                placeholder="react, typescript, ui"
-              />
-            </div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => { void handleSaveMetadata() }}
-                disabled={savingMeta}
-                className="border-2 border-black bg-black text-white px-4 py-1.5 text-xs font-bold hover:bg-yellow-300 hover:text-black transition-colors"
-              >
-                {savingMeta ? 'Saving…' : 'Save & Synchronize'}
-              </button>
-              <button
-                onClick={() => setEditingMeta(false)}
-                className="border-2 border-black bg-white px-3 py-1.5 text-xs font-bold hover:bg-gray-100"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : meta ? (
-          <div className="space-y-4">
-            <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{meta.description}</p>
-            {meta.acceptanceCriteria && (
-              <div className="bg-gray-50 border-2 border-gray-200 p-3.5 space-y-1">
-                <h3 className="font-bold text-xs uppercase tracking-wider text-gray-600">
-                  Acceptance Criteria
-                </h3>
-                <p className="text-xs text-gray-800 whitespace-pre-wrap">{meta.acceptanceCriteria}</p>
-              </div>
-            )}
-            {meta.tags && meta.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 pt-2">
-                {meta.tags.map((t) => (
-                  <span key={t} className="px-2.5 py-0.5 text-xs font-medium border border-gray-300 bg-gray-100">
-                    #{t}
-                  </span>
+          {bounty.acceptanceCriteria && (
+            <Section title="How a fix is judged">
+              <p className="prose-plain">{bounty.acceptanceCriteria}</p>
+            </Section>
+          )}
+          {bounty.links.length > 0 && (
+            <Section title="Links">
+              <ul className="space-y-1.5 text-sm">
+                {bounty.links.map((l) => (
+                  <li key={l}>
+                    <ExternalLink href={l}>{l}</ExternalLink>
+                  </li>
                 ))}
-              </div>
+              </ul>
+            </Section>
+          )}
+
+          <Section title={`Submissions (${bounty.submissionCount})`}>
+            {submissionsQuery.isError ? (
+              <ErrorState title="Submissions did not load" onRetry={() => void submissionsQuery.refetch()} />
+            ) : submissionsQuery.isPending ? (
+              <Skeleton className="h-24 w-full" />
+            ) : submissions.length === 0 ? (
+              <EmptyState title="No submissions yet">
+                {bounty.status === Status.Funded && new Date(bounty.deadline).getTime() > now
+                  ? 'Be the first to send a fix before the deadline.'
+                  : 'Nobody submitted work for this bounty.'}
+              </EmptyState>
+            ) : (
+              <ul className="space-y-3">
+                {submissions.map((s) => (
+                  <SubmissionItem key={s.id} s={s} self={me === s.submitterWallet} />
+                ))}
+              </ul>
             )}
-          </div>
-        ) : (
-          <div className="border border-dashed border-gray-300 p-6 text-center text-xs text-gray-500 space-y-2">
-            <p>No extended off-chain description was stored for this bounty.</p>
-            {isCreator && (
-              <button
-                onClick={() => setEditingMeta(true)}
-                className="border-2 border-black bg-black text-white px-3 py-1.5 text-xs font-bold hover:bg-yellow-300 hover:text-black transition-colors inline-block mt-1"
-              >
-                Add Description Now
-              </button>
-            )}
-          </div>
-        )}
-      </div>
+          </Section>
 
-      {/* Action Zone: Funding / Submitting / Claiming / Refunding */}
-      <NetworkGuard>
-        <div className="space-y-4">
-          {/* Fund unfunded open bounty */}
-          {bounty.status === BountyStatus.Open && isCreator && (
-            <div className="border-2 border-black bg-yellow-100 p-5 shadow-[4px_4px_0px_black] space-y-3">
-              <div className="flex items-center gap-2 font-bold text-sm">
-                <Info size={16} className="text-yellow-700" />
-                <span>This bounty is registered onchain but not yet funded.</span>
-              </div>
-              <p className="text-xs text-gray-700">
-                Deposit {bounty.rewardFormatted} USDC into escrow to activate submissions from contributors.
-              </p>
-              <button
-                onClick={handleFundOpen}
-                disabled={usdcApprovePending || fundPending || fundConfirming}
-                className="border-2 border-black bg-black text-white px-5 py-2.5 text-sm font-bold hover:bg-yellow-300 hover:text-black transition-all shadow-[2px_2px_0px_black] disabled:opacity-50"
-              >
-                {usdcApprovePending
-                  ? 'Approving USDC…'
-                  : fundPending || fundConfirming
-                  ? 'Funding Escrow…'
-                  : `Fund with ${bounty.rewardFormatted} USDC`}
-              </button>
-            </div>
-          )}
-
-          {/* Submit Work Form */}
-          {canSubmit && (
-            <div className="border-2 border-black bg-white p-5 shadow-[4px_4px_0px_black] space-y-4">
-              {!showSubmitForm ? (
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                  <div>
-                    <h3 className="font-display font-bold text-base">Ready to fix this issue?</h3>
-                    <p className="text-xs text-gray-500">
-                      Submit your pull request link or work explanation to be considered for the reward.
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      if (!user) {
-                        toast.error('Please sign in with Google first.')
-                        void signInWithGoogle()
-                        return
-                      }
-                      setShowSubmitForm(true)
-                    }}
-                    className="border-2 border-black bg-black text-white px-5 py-2.5 text-sm font-bold hover:bg-yellow-300 hover:text-black transition-all shadow-[2px_2px_0px_#EAB308] shrink-0"
-                  >
-                    Submit Work
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between border-b pb-2">
-                    <h3 className="font-bold text-sm">Submit your solution</h3>
-                    <button
-                      onClick={() => setShowSubmitForm(false)}
-                      className="text-xs font-bold underline"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold mb-1">
-                      Solution Description <span className="text-red-500">*</span>
-                    </label>
-                    <textarea
-                      rows={4}
-                      placeholder="Explain how you fixed the issue, test results, and implementation notes…"
-                      value={submissionText}
-                      onChange={(e) => setSubmissionText(e.target.value)}
-                      className="w-full border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-300"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold mb-1">
-                      Links (PR, GitHub commit, Live demo — one per line)
-                    </label>
-                    <textarea
-                      rows={2}
-                      placeholder="https://github.com/org/repo/pull/42&#10;https://demo.example.com"
-                      value={submissionLinks}
-                      onChange={(e) => setSubmissionLinks(e.target.value)}
-                      className="w-full border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-300"
-                    />
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={handleSubmit}
-                      disabled={submitPending || submitConfirming}
-                      className="border-2 border-black bg-black text-white px-5 py-2.5 text-sm font-bold hover:bg-yellow-300 hover:text-black transition-all shadow-[2px_2px_0px_#EAB308] disabled:opacity-60"
-                    >
-                      {submitPending
-                        ? 'Confirm in wallet…'
-                        : submitConfirming
-                        ? 'Submitting onchain…'
-                        : 'Submit Solution'}
-                    </button>
-                    <button
-                      onClick={() => setShowSubmitForm(false)}
-                      className="border-2 border-black bg-white px-4 py-2.5 text-sm font-medium hover:bg-gray-100"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Claim Reward (Approved Contributor) */}
-          {canClaim && (
-            <div className="border-2 border-black bg-green-100 p-6 shadow-[6px_6px_0px_black] space-y-3">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 size={20} className="text-green-700" />
-                <h3 className="font-display font-bold text-lg text-green-900">
-                  Congratulations! You were approved for this bounty.
-                </h3>
-              </div>
-              <p className="text-xs text-green-800">
-                You can now withdraw the escrowed {bounty.rewardFormatted} USDC directly to your connected wallet.
-              </p>
-              <button
-                onClick={handleClaim}
-                disabled={claimPending || claimConfirming}
-                className="border-2 border-black bg-black text-white px-6 py-3 font-bold text-sm hover:bg-yellow-300 hover:text-black transition-all shadow-[4px_4px_0px_#16a34a] disabled:opacity-60"
-              >
-                {claimPending ? 'Confirm in wallet…' : claimConfirming ? 'Claiming payout…' : `Claim ${bounty.rewardFormatted} USDC`}
-              </button>
-            </div>
-          )}
-
-          {/* Refund (Funded + Expired) */}
-          {canRefund && (
-            <div className="border-2 border-black bg-yellow-100 p-5 shadow-[4px_4px_0px_black] space-y-2">
-              <h3 className="font-bold text-sm">Bounty deadline has passed without approval</h3>
-              <p className="text-xs text-gray-700">
-                As the creator, you can refund your escrowed {bounty.rewardFormatted} USDC back to your wallet.
-              </p>
-              <button
-                onClick={handleRefund}
-                disabled={refundPending || refundConfirming}
-                className="border-2 border-black bg-black text-white px-5 py-2.5 text-sm font-bold hover:bg-yellow-300 hover:text-black transition-all disabled:opacity-60"
-              >
-                {refundPending ? 'Confirm in wallet…' : refundConfirming ? 'Refunding…' : 'Refund Escrowed USDC'}
-              </button>
-            </div>
-          )}
-
-          {/* Refund After Approval (Grace period passed) */}
-          {canRefundAfterApproval && graceExpired && (
-            <div className="border-2 border-black bg-yellow-100 p-5 shadow-[4px_4px_0px_black] space-y-2">
-              <h3 className="font-bold text-sm">Contributor claim window expired (7-day grace period)</h3>
-              <p className="text-xs text-gray-700">
-                The approved contributor did not claim the reward. You can now reclaim the escrowed USDC.
-              </p>
-              <button
-                onClick={handleRefundAfterApproval}
-                disabled={refundApprovalPending || refundApprovalConfirming}
-                className="border-2 border-black bg-black text-white px-5 py-2.5 text-sm font-bold hover:bg-yellow-300 hover:text-black transition-all disabled:opacity-60"
-              >
-                {refundApprovalPending ? 'Confirm in wallet…' : refundApprovalConfirming ? 'Recovering…' : 'Recover Escrow Funds'}
-              </button>
-            </div>
-          )}
-
-          {canRefundAfterApproval && !graceExpired && graceCutoff && (
-            <div className="border-2 border-gray-300 bg-gray-50 p-3.5 text-xs text-gray-600">
-              <ShieldCheck size={14} className="inline mr-1 text-gray-500" />
-              Approved contributor has until {graceCutoff.toLocaleDateString()} to claim before creator refund becomes available.
-            </div>
-          )}
+          <Section title="History">
+            <History onchainId={bounty.onchainId} />
+          </Section>
         </div>
-      </NetworkGuard>
 
-      {/* Submissions List Section */}
-      <div className="border-2 border-black bg-white p-6 shadow-[4px_4px_0px_black] space-y-4">
-        <h2 className="font-display font-bold text-lg flex items-center justify-between border-b pb-3">
-          <span>Submissions ({submissions.length})</span>
-          <span className="text-xs font-normal text-gray-500">
-            {bounty.status === BountyStatus.Funded ? 'Reviewing' : 'Closed'}
-          </span>
-        </h2>
-
-        {submissions.length === 0 ? (
-          <div className="py-8 text-center text-xs text-gray-500 space-y-1">
-            <p>No solutions submitted yet.</p>
-            {bounty.status === BountyStatus.Funded && !bounty.isExpired && (
-              <p>Be the first contributor to submit a fix!</p>
-            )}
+        <aside className="space-y-6 lg:sticky lg:top-24 lg:self-start" aria-label="Prize and actions">
+          <div className="space-y-5 rounded-md border-2 border-ink bg-white p-5 shadow-hard">
+            <div>
+              <p className="text-sm text-mute">Prize pool</p>
+              <p className="num font-display text-4xl font-bold leading-none">
+                {formatUsdc(reward)} <span className="text-lg">USDC</span>
+              </p>
+              <p className="mt-2 text-sm text-mute">{describeStructure(bounty.prizeShares)}</p>
+            </div>
+            <dl className="space-y-1 border-y border-line py-3 text-sm">
+              <div className="flex justify-between gap-3">
+                <dt className="text-mute">Deadline</dt>
+                <dd className="text-right font-medium">{formatDate(bounty.deadline, true)}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-mute">Time</dt>
+                <dd className="font-bold">{timeLeft(bounty.deadline, now)}</dd>
+              </div>
+            </dl>
+            <PrizeLadder
+              shares={bounty.prizeShares}
+              payouts={payouts.length ? payouts : undefined}
+              winners={bounty.winners}
+              claimed={bounty.winnersClaimed}
+              selfAddress={me}
+            />
           </div>
-        ) : (
-          <div className="space-y-4">
-            {submissions.map((sub, sIdx) => {
-              const isThisApproved =
-                bounty.approvedContributor.toLowerCase() === sub.contributorAddress.toLowerCase()
 
-              return (
-                <div
-                  key={`${sub.contributorAddress}_${sIdx}`}
-                  className={`border-2 p-4 transition-all ${
-                    isThisApproved
-                      ? 'border-green-600 bg-green-50 shadow-[3px_3px_0px_#16a34a]'
-                      : 'border-black bg-white shadow-[2px_2px_0px_black]'
-                  }`}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2.5 mb-2.5">
-                    <div className="flex items-center gap-2 text-xs">
-                      <User size={14} />
-                      <a
-                        href={explorerAddr(sub.contributorAddress)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="font-mono font-bold hover:underline"
-                      >
-                        {formatAddress(sub.contributorAddress)}
-                      </a>
-                      {sub.submittedAt && (
-                        <span className="text-gray-400">
-                          • {timeAgo(sub.submittedAt)}
-                        </span>
-                      )}
-                    </div>
-
-                    {isThisApproved ? (
-                      <span className="text-xs font-bold bg-green-300 border border-black px-2 py-0.5">
-                        ✓ Approved Contributor
-                      </span>
-                    ) : isCreator && canApprove ? (
-                      <button
-                        onClick={() => handleApproveContributor(sub.contributorAddress)}
-                        disabled={approvePending || approveConfirming}
-                        className="border-2 border-black bg-yellow-300 hover:bg-black hover:text-white px-3 py-1 text-xs font-bold transition-colors shadow-[1px_1px_0px_black]"
-                      >
-                        {approvePending ? 'Confirming…' : 'Approve for Payout'}
-                      </button>
-                    ) : null}
-                  </div>
-
-                  <p className="text-sm text-gray-800 whitespace-pre-wrap">{sub.description}</p>
-
-                  {sub.links && sub.links.length > 0 && (
-                    <div className="mt-3 pt-2 border-t border-gray-100">
-                      <span className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-1">
-                        Links
-                      </span>
-                      <div className="space-y-1">
-                        {sub.links.map((link, lIdx) => (
-                          <a
-                            key={lIdx}
-                            href={link.startsWith('http') ? link : `https://${link}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline break-all"
-                          >
-                            <ExternalLink size={11} /> {link}
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+          <div className="rounded-md border border-line bg-white p-5">
+            <ActionPanel bounty={bounty} submissions={submissions} now={now} />
           </div>
-        )}
+        </aside>
       </div>
-    </div>
+    </article>
   )
 }

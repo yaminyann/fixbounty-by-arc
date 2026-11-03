@@ -1,16 +1,14 @@
-# Stage 1: Build the Vite production bundle
+# Stage 1: build the static site
 FROM node:20-slim AS builder
 
 WORKDIR /app
 
-# Install Bun for lockfile-compliant dependency installation
 RUN npm install -g bun@1.2.4
 
-# Ensure devDependencies are installed and V8 memory is managed cleanly
-ENV NODE_ENV=development
-ENV NODE_OPTIONS="--max-old-space-size=1536"
+ENV NODE_ENV=development \
+    NODE_OPTIONS="--max-old-space-size=1536"
 
-# Accept build arguments from Coolify/Docker
+# Public, browser-side configuration only. Nothing secret belongs here.
 ARG VITE_FIREBASE_API_KEY
 ARG VITE_FIREBASE_AUTH_DOMAIN
 ARG VITE_FIREBASE_PROJECT_ID
@@ -18,10 +16,11 @@ ARG VITE_FIREBASE_STORAGE_BUCKET
 ARG VITE_FIREBASE_MESSAGING_SENDER_ID
 ARG VITE_FIREBASE_APP_ID
 ARG VITE_FIREBASE_MEASUREMENT_ID
-ARG VITE_BOUNTY_BOARD_ADDRESS
-ARG ARC_RPC_URL
-ARG VITE_ADMIN_PASSWORD
-ARG VITE_ADMIN_EMAILS
+ARG VITE_ARC_RPC_URL
+ARG VITE_ARC_CHAIN_ID
+ARG VITE_ARC_EXPLORER_URL
+ARG VITE_WALLETCONNECT_PROJECT_ID
+ARG VITE_API_URL
 
 ENV VITE_FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY \
     VITE_FIREBASE_AUTH_DOMAIN=$VITE_FIREBASE_AUTH_DOMAIN \
@@ -30,38 +29,29 @@ ENV VITE_FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY \
     VITE_FIREBASE_MESSAGING_SENDER_ID=$VITE_FIREBASE_MESSAGING_SENDER_ID \
     VITE_FIREBASE_APP_ID=$VITE_FIREBASE_APP_ID \
     VITE_FIREBASE_MEASUREMENT_ID=$VITE_FIREBASE_MEASUREMENT_ID \
-    VITE_BOUNTY_BOARD_ADDRESS=$VITE_BOUNTY_BOARD_ADDRESS \
-    VITE_ARC_RPC_URL=$ARC_RPC_URL \
-    VITE_ADMIN_PASSWORD=$VITE_ADMIN_PASSWORD \
-    VITE_ADMIN_EMAILS=$VITE_ADMIN_EMAILS
+    VITE_ARC_RPC_URL=$VITE_ARC_RPC_URL \
+    VITE_ARC_CHAIN_ID=$VITE_ARC_CHAIN_ID \
+    VITE_ARC_EXPLORER_URL=$VITE_ARC_EXPLORER_URL \
+    VITE_WALLETCONNECT_PROJECT_ID=$VITE_WALLETCONNECT_PROJECT_ID \
+    VITE_API_URL=$VITE_API_URL
 
-# Copy dependency specifications
 COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
 
-# Install dependencies using Bun for speed and exact lockfile resolution
-RUN bun install --frozen-lockfile || bun install
-
-# Copy source code and build configuration
 COPY . .
-
-# Build production assets using Node.js directly (respecting V8 memory options)
 RUN npm run build
 
-# Stage 2: Serve using high-performance Nginx with reverse proxy
+# Stage 2: serve with nginx, proxying /api to the backend
 FROM nginx:alpine
 
-# Install curl for health checking
 RUN apk add --no-cache curl
 
-# Copy custom Nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf
-
-# Copy compiled static assets from builder stage
 COPY --from=builder /app/dist /usr/share/nginx/html
 
 EXPOSE 80
 
-HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost/ || exit 1
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -fsS http://localhost/ || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]

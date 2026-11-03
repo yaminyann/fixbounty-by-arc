@@ -1,182 +1,160 @@
-import { useState, useMemo, useEffect } from 'react'
-import { Search, SlidersHorizontal, RefreshCw } from 'lucide-react'
-import { useBountyCount, useBounties } from '@/hooks/useBounty'
-import { BountyCard } from '@/components/ui/BountyCard'
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { Search } from 'lucide-react'
+import { BountyRow, BountyRowSkeleton } from '@/components/bounty/BountyRow'
+import { ButtonLink } from '@/components/ui/Button'
+import { EmptyState, ErrorState, PageHeader } from '@/components/ui/Feedback'
+import { Input, Select } from '@/components/ui/Form'
 import { Pagination } from '@/components/ui/Pagination'
-import { BountyStatus } from '@/lib/bountyTypes'
-import { getRecentBountyMetas, type BountyMeta } from '@/lib/firestore'
-import { apiGetBounties } from '@/lib/api'
+import { Segmented } from '@/components/ui/Tabs'
+import { useBounties, type BountyFilters } from '@/lib/api/queries'
 
-const STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: String(BountyStatus.Open), label: 'Open' },
-  { value: String(BountyStatus.Funded), label: 'Funded' },
-  { value: String(BountyStatus.Approved), label: 'Approved' },
-  { value: String(BountyStatus.Claimed), label: 'Claimed' },
-]
+const PAGE_SIZE = 10
 
+type View = 'open' | 'picked' | 'paid' | 'all'
 
-export function Explore() {
-  const { count, isLoading: countLoading, refetch: refetchCount } = useBountyCount()
-  const allIds = useMemo(() => Array.from({ length: count }, (_, i) => count - i), [count])
-  const { bounties, isLoading, refetch } = useBounties(allIds)
+const VIEWS: Record<View, Pick<BountyFilters, 'status' | 'open'>> = {
+  open: { status: '1', open: true },
+  picked: { status: '2' },
+  paid: { status: '3' },
+  all: {},
+}
 
-  const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(12)
-  const [metas, setMetas] = useState<Record<number, BountyMeta>>({})
+const SORTS = [
+  { value: 'newest', label: 'Newest' },
+  { value: 'reward', label: 'Highest prize' },
+  { value: 'deadline', label: 'Ending soonest' },
+  { value: 'popular', label: 'Most submissions' },
+] as const
 
+export default function Explore() {
+  const [params, setParams] = useSearchParams()
+  const view = (params.get('view') as View) in VIEWS ? (params.get('view') as View) : 'open'
+  const sort = (SORTS.find((s) => s.value === params.get('sort'))?.value ?? 'newest') as BountyFilters['sort']
+  const offset = Math.max(Number(params.get('offset')) || 0, 0)
+  const urlSearch = params.get('q') ?? ''
+
+  const [text, setText] = useState(urlSearch)
   useEffect(() => {
-    // 1. Query PostgreSQL API
-    apiGetBounties().then((list) => {
-      const map: Record<number, BountyMeta> = {}
-      for (const b of list) {
-        if (b.onchainId) {
-          map[b.onchainId] = {
-            bountyId: b.onchainId,
-            creatorUid: b.creatorUserId || 'anonymous',
-            creatorAddress: b.creatorWallet,
-            description: b.description,
-            acceptanceCriteria: b.acceptanceCriteria,
-            tags: b.tags,
-            links: b.links,
-          }
-        }
-      }
-      setMetas((prev) => ({ ...map, ...prev }))
-    }).catch(() => {})
+    setText(urlSearch)
+  }, [urlSearch])
 
-    // 2. Query Firestore fallback
-    getRecentBountyMetas(100).then((list) => {
-      const map: Record<number, BountyMeta> = {}
-      for (const m of list) map[m.bountyId] = m
-      setMetas((prev) => ({ ...map, ...prev }))
-    }).catch(() => {})
-  }, [])
+  // Search as you type, without a request per keystroke.
+  useEffect(() => {
+    if (text === urlSearch) return
+    const id = window.setTimeout(() => update({ q: text, offset: undefined }), 300)
+    return () => window.clearTimeout(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text])
 
-  const filtered = useMemo(() => {
-    let list = bounties
-    if (statusFilter !== 'all') {
-      list = list.filter((b) => (b.status as number) === Number(statusFilter))
+  const update = (patch: Record<string, string | undefined>) => {
+    const next = new URLSearchParams(params)
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined || value === '') next.delete(key)
+      else next.set(key, value)
     }
-    if (search.trim()) {
-      const q = search.toLowerCase()
-      list = list.filter((b) => {
-        const matchTitle = b.title.toLowerCase().includes(q)
-        const matchTag = metas[b.id]?.tags?.some((t) => t.toLowerCase().includes(q))
-        const matchDesc = metas[b.id]?.description?.toLowerCase().includes(q)
-        return matchTitle || matchTag || matchDesc
-      })
-    }
-    return list
-  }, [bounties, statusFilter, search, metas])
-
-  const totalPages = Math.ceil(filtered.length / pageSize)
-  const paged = filtered.slice((page - 1) * pageSize, page * pageSize)
-
-  const handleRefresh = () => {
-    void refetchCount()
-    void refetch()
+    setParams(next, { replace: true })
   }
 
+  const query = useBounties({ ...VIEWS[view], sort, search: urlSearch || undefined, limit: PAGE_SIZE, offset })
+  const items = query.data?.items ?? []
+  const total = query.data?.total ?? 0
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="font-display font-bold text-2xl tracking-tight">Explore Bounties</h1>
-          {!countLoading && (
-            <p className="text-sm text-gray-500 mt-0.5">
-              {count} {count === 1 ? 'bounty' : 'bounties'} posted
-            </p>
-          )}
-        </div>
-        <button
-          onClick={handleRefresh}
-          className="border-2 border-black p-2 hover:bg-yellow-300 transition-colors"
-          aria-label="Refresh"
-        >
-          <RefreshCw size={16} />
-        </button>
-      </div>
+    <div>
+      <PageHeader
+        title="Explore bounties"
+        actions={
+          <ButtonLink to="/create" variant="primary">
+            Post a bounty
+          </ButtonLink>
+        }
+      >
+        Every bounty here has its prize locked in the contract and has been reviewed by an admin.
+      </PageHeader>
 
-      {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search bounties…"
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1) }}
-            className="w-full border-2 border-black pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-300 bg-white"
+      <div className="mb-4 flex flex-wrap items-end gap-3">
+        <div className="relative min-w-[14rem] flex-1">
+          <label htmlFor="bounty-search" className="sr-only">
+            Search bounties
+          </label>
+          <Search size={16} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-mute" />
+          <Input
+            id="bounty-search"
+            type="search"
+            placeholder="Search by title, description or tag"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            className="pl-9"
           />
         </div>
-        <div className="flex items-center gap-2">
-          <SlidersHorizontal size={16} className="text-gray-500" />
-          <div className="flex border-2 border-black">
-            {STATUS_FILTER_OPTIONS.map(({ value, label }) => (
-              <button
-                key={value}
-                onClick={() => { setStatusFilter(value); setPage(1) }}
-                className={`px-3 py-2 text-xs font-bold border-r border-black last:border-r-0 transition-colors ${
-                  statusFilter === value ? 'bg-black text-white' : 'bg-white hover:bg-yellow-300'
-                }`}
-              >
-                {label}
-              </button>
+        <Segmented
+          label="Bounty state"
+          value={view}
+          onChange={(v) => update({ view: v === 'open' ? undefined : v, offset: undefined })}
+          items={[
+            { value: 'open', label: 'Open for work' },
+            { value: 'picked', label: 'Winners picked' },
+            { value: 'paid', label: 'Paid out' },
+            { value: 'all', label: 'All' },
+          ]}
+        />
+        <div className="w-44">
+          <label htmlFor="bounty-sort" className="sr-only">
+            Sort by
+          </label>
+          <Select id="bounty-sort" value={sort} onChange={(e) => update({ sort: e.target.value === 'newest' ? undefined : e.target.value, offset: undefined })}>
+            {SORTS.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
             ))}
-          </div>
+          </Select>
         </div>
       </div>
 
-      {/* Grid */}
-      {isLoading || countLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-36 border-2 border-gray-200 bg-gray-50 animate-pulse" />
+      <p className="mb-2 min-h-5 text-sm text-mute" aria-live="polite">
+        {query.isSuccess && `${total} ${total === 1 ? 'bounty' : 'bounties'}${urlSearch ? ` matching “${urlSearch}”` : ''}`}
+      </p>
+
+      {query.isError ? (
+        <ErrorState title="Bounties did not load" message="The server could not be reached." onRetry={() => void query.refetch()} />
+      ) : query.isPending ? (
+        <ul aria-busy className="overflow-hidden rounded-md border-2 border-ink">
+          {Array.from({ length: 4 }, (_, i) => (
+            <BountyRowSkeleton key={i} />
           ))}
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="border-2 border-black bg-white p-12 text-center shadow-[4px_4px_0px_black]">
-          <p className="font-bold text-lg mb-2">No bounties found</p>
-          <p className="text-gray-500 text-sm">
-            {search || statusFilter !== 'all'
-              ? 'Try adjusting your filters.'
-              : 'Be the first to post a bounty!'}
-          </p>
-        </div>
+        </ul>
+      ) : items.length === 0 ? (
+        <EmptyState
+          title={urlSearch ? 'Nothing matches that search' : 'No bounties here yet'}
+          action={
+            urlSearch || view !== 'all' ? (
+              <button
+                type="button"
+                className="h-10 rounded border-2 border-ink bg-white px-4 text-sm font-bold hover:bg-signal-soft"
+                onClick={() => setParams({}, { replace: true })}
+              >
+                Clear search and filters
+              </button>
+            ) : (
+              <ButtonLink to="/create" variant="primary">
+                Post a bounty
+              </ButtonLink>
+            )
+          }
+        >
+          {urlSearch ? 'Try a shorter search, or a tag such as react or rust.' : 'Bounties show up here after an admin approves them.'}
+        </EmptyState>
       ) : (
-        <>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {paged.map((bounty) => (
-              <BountyCard
-                key={bounty.id}
-                bounty={bounty}
-                tags={metas[bounty.id]?.tags ?? []}
-              />
-            ))}
-          </div>
-
-          {/* Pagination */}
-          <Pagination
-            currentPage={page}
-            totalPages={totalPages}
-            totalItems={filtered.length}
-            pageSize={pageSize}
-            pageSizeOptions={[6, 12, 24, 48]}
-            onPageChange={(newPage) => {
-              setPage(newPage)
-              window.scrollTo({ top: 0, behavior: 'smooth' })
-            }}
-            onPageSizeChange={(newSize) => {
-              setPageSize(newSize)
-              setPage(1)
-            }}
-            className="mt-6"
-          />
-        </>
+        <ul className={`overflow-hidden rounded-md border-2 border-ink transition-opacity ${query.isPlaceholderData ? 'opacity-60' : ''}`}>
+          {items.map((b) => (
+            <BountyRow key={b.id} bounty={b} />
+          ))}
+        </ul>
       )}
+
+      <Pagination className="mt-6" total={total} limit={PAGE_SIZE} offset={offset} onChange={(o) => { update({ offset: o ? String(o) : undefined }); window.scrollTo({ top: 0 }) }} />
     </div>
   )
 }

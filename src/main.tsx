@@ -5,40 +5,33 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { WagmiProvider } from 'wagmi'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ConnectKitProvider } from 'connectkit'
 import { Toaster } from 'sonner'
 import { BrowserRouter } from 'react-router-dom'
-import { config } from './config'
-import { AuthProvider } from './contexts/AuthContext'
-import App from './App'
+import { wagmiConfig } from '@/lib/wagmi'
+import { AuthProvider } from '@/contexts/AuthContext'
+import { IdentityProvider } from '@/contexts/IdentityContext'
+import App from '@/App'
 import './index.css'
 
-const queryClient = new QueryClient()
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { staleTime: 10_000, retry: 1, refetchOnWindowFocus: false },
+  },
+})
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
-      <WagmiProvider config={config}>
+      <WagmiProvider config={wagmiConfig}>
         <QueryClientProvider client={queryClient}>
-          <ConnectKitProvider
-            customTheme={{
-              '--ck-font-family': "'DM Sans', sans-serif",
-              '--ck-primary-button-background': '#000000',
-              '--ck-primary-button-hover-background': '#EAB308',
-              '--ck-primary-button-color': '#FFFFFF',
-              '--ck-body-background': '#FAFAF8',
-              '--ck-body-color': '#000000',
-              '--ck-border-radius': '0px',
-            }}
-          >
-            <AuthProvider>
+          <AuthProvider>
+            <IdentityProvider>
               <App />
-              <Toaster position="top-center" richColors />
-            </AuthProvider>
-          </ConnectKitProvider>
+              <Toaster position="bottom-right" toastOptions={{ classNames: { toast: 'font-sans' } }} />
+            </IdentityProvider>
+          </AuthProvider>
         </QueryClientProvider>
       </WagmiProvider>
     </BrowserRouter>
   </StrictMode>,
 )
-

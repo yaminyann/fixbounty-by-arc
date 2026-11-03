@@ -1,0 +1,17 @@
+.git
+.env
+.env.*
+!.env.example
+node_modules
+**/node_modules
+dist
+server/dist
+contracts/out
+contracts/cache
+contracts/broadcast
+lib
+docs
+screenshots
+console.jsonl
+*.md
+!README.md
