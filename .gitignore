@@ -49,3 +49,6 @@ Thumbs.db
 
 # Server build output
 server/dist/
+
+# forge script broadcast output
+broadcast/

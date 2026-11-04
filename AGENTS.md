@@ -45,6 +45,8 @@ An escrow board for open-source bug fixes on Arc Testnet. Maintainers lock a USD
 
 - `.env.example` documents every variable. `FIREBASE_PROJECT_ID` must equal `VITE_FIREBASE_PROJECT_ID`.
 - After deploying a new contract: set `BOUNTY_BOARD_ADDRESS` and `INDEXER_START_BLOCK`, restart the backend. Old-contract tables are kept as `legacy_*`.
+- BountyBoard v2 is deployed on Arc Testnet at `0x2A35C6B7f8D2aaB52493Fb2CDedB84d474989329` (deploy block 70667442, treasury `0x378862A20B312298dc54585CbabC531D70F9baE9`). Deployer was a throwaway wallet; the contract has no owner so the key has no ongoing power.
 - The previous contract (`0x489cfbd95e8f5a934b7ab1e0fe7a89fa3d0527fb`) used a different ABI and is no longer supported by the app.
+- Vite inlines every `VITE_` variable if code reads the whole `import.meta.env` object. Read individual variables only (see `src/lib/env.ts`), and keep secrets out of `VITE_` names anyway.
 - Do not put secrets in `VITE_` variables, Dockerfile build args, or committed files.
 - The contract has not had an independent audit.
