@@ -37,5 +37,5 @@ for _ in $(seq 1 60); do
 done
 
 echo "[ERROR] The stack did not become healthy within 2 minutes."
-docker compose -f docker-compose.yml logs --tail=80 backend
+docker compose -f docker-compose.yml logs --tail=80 fixbounty-api
 exit 1

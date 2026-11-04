@@ -172,7 +172,7 @@ async function shutdown(code) {
 }
 
 try {
-  await waitFor(async () => (await fetch(`http://127.0.0.1:${API_PORT}/health`)).ok, 'server health', 30_000)
+  await waitFor(async () => (await fetch(`http://127.0.0.1:${API_PORT}/api/health`)).ok, 'server health', 30_000)
   console.log('\nServer is up\n')
 
   const tok = {

@@ -120,7 +120,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { server.kill(); 
 
 for (let i = 0; i < 60; i += 1) {
   try {
-    if ((await fetch(`http://127.0.0.1:${API_PORT}/health`)).ok) break
+    if ((await fetch(`http://127.0.0.1:${API_PORT}/api/health`)).ok) break
   } catch {
     // not up yet
   }

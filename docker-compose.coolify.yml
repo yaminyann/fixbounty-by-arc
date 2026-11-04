@@ -1,8 +1,9 @@
 # Coolify deployment. The database is the PostgreSQL resource created in Coolify, so there is no
-# postgres service here: set DATABASE_URL to it. In the Coolify resource settings enable
-# "Connect to Predefined Network" so the backend can reach that database by its internal hostname.
+# postgres service here: set DATABASE_URL to it. The API joins Coolify's shared "coolify" network so it can reach
+# that database by its internal hostname. The API service has a unique name so it does not collide with other
+# apps' "backend" services on that shared network.
 services:
-  backend:
+  fixbounty-api:
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -23,6 +24,7 @@ services:
       TREASURY_ADDRESS: ${TREASURY_ADDRESS:?Set TREASURY_ADDRESS}
     networks:
       - fixbounty-net
+      - coolify
 
   frontend:
     build:
@@ -43,7 +45,7 @@ services:
         VITE_API_URL: ${VITE_API_URL:-/api}
     restart: unless-stopped
     depends_on:
-      backend:
+      fixbounty-api:
         condition: service_healthy
     networks:
       - fixbounty-net
@@ -51,3 +53,6 @@ services:
 networks:
   fixbounty-net:
     driver: bridge
+  coolify:
+    external: true
+    name: coolify

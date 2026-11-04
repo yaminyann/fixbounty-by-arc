@@ -1,7 +1,7 @@
-import express, { type Request, type Response } from 'express'
+import express, { type NextFunction, type Request, type Response } from 'express'
 import cors from 'cors'
 import { config } from './config.js'
-import { testConnection, pool } from './db.js'
+import { pool } from './db.js'
 import { runMigrations } from './migrate.js'
 import { errorHandler, securityHeaders } from './lib/http.js'
 import { rateLimit } from './lib/limits.js'
@@ -32,16 +32,33 @@ app.use(
 app.use(express.json({ limit: '64kb' }))
 app.use('/api', rateLimit({ windowMs: 60_000, max: 600 }))
 
-async function health(_req: Request, res: Response): Promise<void> {
+// The process answers as soon as it is up. Database setup continues in the background and /api returns 503 until it
+// finishes, so a slow or unreachable database shows up in the logs instead of crash-looping the container.
+const state = { ready: false, lastError: null as string | null }
+
+function liveness(_req: Request, res: Response): void {
+  res.json({ status: state.ready ? 'healthy' : 'starting', time: new Date().toISOString(), error: state.lastError })
+}
+app.get('/health', liveness)
+
+app.get('/api/health', async (_req: Request, res: Response) => {
+  if (!state.ready) {
+    res.status(503).json({ status: 'starting', error: state.lastError })
+    return
+  }
   try {
     await pool.query('SELECT 1')
     res.json({ status: 'healthy', time: new Date().toISOString() })
   } catch {
     res.status(503).json({ status: 'unhealthy' })
   }
-}
-app.get('/health', health)
-app.get('/api/health', health)
+})
+
+app.use('/api', (_req: Request, res: Response, next: NextFunction) => {
+  if (state.ready) return next()
+  res.setHeader('Retry-After', '5')
+  res.status(503).json({ error: 'The service is starting. Try again in a few seconds.' })
+})
 
 app.use('/api/auth', authRouter)
 app.use('/api/bounties', bountiesRouter)
@@ -58,23 +75,39 @@ process.on('unhandledRejection', (reason) => {
   console.error('[Unhandled rejection]', reason)
 })
 
-async function bootstrap(): Promise<void> {
-  console.log('[FixBounty] Starting…')
-  const dbReady = await testConnection()
-  if (dbReady) {
-    await runMigrations()
-    startIndexer()
-  } else {
-    console.error('[FixBounty] Database unreachable; exiting so the orchestrator restarts the service.')
-    process.exit(1)
-  }
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-  app.listen(config.port, '0.0.0.0', () => {
-    console.log(`[FixBounty] Listening on :${config.port} (${config.isProduction ? 'production' : 'development'})`)
-  })
+function describeDatabase(): string {
+  try {
+    const url = new URL(config.databaseUrl)
+    return `${url.hostname}:${url.port || '5432'}/${url.pathname.replace(/^\//, '')}`
+  } catch {
+    return 'an invalid DATABASE_URL'
+  }
 }
 
-bootstrap().catch((err) => {
-  console.error('[FixBounty] Fatal bootstrap error:', err)
-  process.exit(1)
+/** Connects to PostgreSQL, applies migrations and starts the indexer, retrying until it works. */
+async function initialize(): Promise<void> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await pool.query('SELECT 1')
+      await runMigrations()
+      startIndexer()
+      state.ready = true
+      state.lastError = null
+      console.log('[FixBounty] Database ready')
+      return
+    } catch (err) {
+      const e = err as Error & { code?: string }
+      state.lastError = `${e.code ? `${e.code}: ` : ''}${e.message}`
+      console.error(`[FixBounty] Database setup failed (attempt ${attempt}) for ${describeDatabase()}: ${state.lastError}`)
+      await sleep(Math.min(3_000 * attempt, 15_000))
+    }
+  }
+}
+
+app.listen(config.port, '0.0.0.0', () => {
+  console.log(`[FixBounty] Listening on :${config.port} (${config.isProduction ? 'production' : 'development'})`)
+  console.log(`[FixBounty] Database: ${describeDatabase()}`)
+  void initialize()
 })

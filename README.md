@@ -68,7 +68,7 @@ If the ABI changes: `forge build && bun run abi` regenerates `src/lib/bountyBoar
 
 ## Deploying the site
 
-- **Coolify:** use `docker-compose.coolify.yml`. Create a PostgreSQL resource, set `DATABASE_URL` to it, enable "Connect to Predefined Network" so the backend can reach it, and provide the variables from `.env.example`.
+- **Coolify:** use `docker-compose.coolify.yml`. Create a PostgreSQL resource, set `DATABASE_URL` to it, the API joins Coolify's shared `coolify` network automatically, so it reaches that database by its internal hostname, and provide the variables from `.env.example`.
 - **Single machine:** `docker-compose.yml` runs PostgreSQL, the API and nginx together. `./deploy-coolify.sh` validates `.env`, builds, and waits for health.
 
 Migrations run on every start. Tables from the previous contract are kept as `legacy_*` and can be dropped once you no longer need them.
