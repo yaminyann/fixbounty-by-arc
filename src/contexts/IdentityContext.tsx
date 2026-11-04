@@ -5,7 +5,7 @@ import { useMe, useWalletLink } from '@/lib/api/queries'
 import { errorMessage } from '@/lib/api/client'
 
 /**
- * A FixBounty identity is two things bound together: a Google account and a wallet whose
+ * A BountyFi identity is two things bound together: a Google account and a wallet whose
  * ownership was proven with a signature. The platform only lets you act when both are
  * present and linked, so every action can be traced to one person and one wallet.
  */

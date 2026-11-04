@@ -45,6 +45,15 @@ const EnvSchema = z.object({
 })
 
 // One set of variables serves both the browser build and the server, so the VITE_ names are accepted as fallbacks.
+// Known deployments, used when the environment leaves the contract address blank so a missing variable cannot
+// leave the site stuck on "contract not deployed". Explicit variables always win.
+const KNOWN_DEPLOYMENTS: Record<string, { address: string; startBlock: string }> = {
+  '5042002': { address: '0x2A35C6B7f8D2aaB52493Fb2CDedB84d474989329', startBlock: '70667442' },
+}
+const chainKey = process.env.CHAIN_ID || process.env.VITE_ARC_CHAIN_ID || '5042002'
+const knownDeployment = KNOWN_DEPLOYMENTS[chainKey]
+const explicitAddress = process.env.BOUNTY_BOARD_ADDRESS?.trim()
+
 const source: NodeJS.ProcessEnv = {
   ...process.env,
   FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID,
@@ -52,6 +61,8 @@ const source: NodeJS.ProcessEnv = {
   CHAIN_ID: process.env.CHAIN_ID || process.env.VITE_ARC_CHAIN_ID,
   EXPLORER_URL: process.env.EXPLORER_URL || process.env.VITE_ARC_EXPLORER_URL,
   TREASURY_ADDRESS: process.env.TREASURY_ADDRESS || process.env.VITE_TREASURY_ADDRESS,
+  BOUNTY_BOARD_ADDRESS: explicitAddress || knownDeployment?.address,
+  INDEXER_START_BLOCK: process.env.INDEXER_START_BLOCK?.trim() || (explicitAddress ? undefined : knownDeployment?.startBlock),
 }
 
 const parsed = EnvSchema.safeParse(source)

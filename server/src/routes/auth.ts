@@ -49,7 +49,7 @@ authRouter.post(
     const issuedAt = new Date()
     const expiresAt = new Date(issuedAt.getTime() + CHALLENGE_TTL_MS)
     const message = [
-      'FixBounty wants to link this wallet to your account.',
+      'BountyFi wants to link this wallet to your account.',
       '',
       `Wallet: ${address}`,
       `Account: ${user.email ?? user.firebaseUid}`,

@@ -1,21 +1,13 @@
 {
-  "name": "FixBounty — Onchain Bounties for Open Source",
-  "short_name": "FixBounty",
-  "description": "Post and earn USDC bounties for open-source bug fixes on Arc Testnet.",
+  "name": "BountyFi",
+  "short_name": "BountyFi",
+  "description": "Escrow board for open-source bug fixes. Get paid in USDC on Arc.",
+  "start_url": "/",
   "icons": [
-    {
-      "src": "/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png"
-    }
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
   ],
-  "theme_color": "#FDE047",
-  "background_color": "#FAFAF8",
+  "theme_color": "#000000",
+  "background_color": "#000000",
   "display": "standalone"
 }
-

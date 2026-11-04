@@ -1,4 +1,4 @@
-# FixBounty design direction
+# BountyFi design direction
 
 Read with `antislop.md`. This file is the direction; antislop is the filter.
 

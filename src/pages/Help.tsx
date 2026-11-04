@@ -18,7 +18,7 @@ export default function Help() {
 
   return (
     <div className="max-w-4xl">
-      <PageHeader title="How FixBounty works">
+      <PageHeader title="How BountyFi works">
         The rules the contract enforces and the review step the platform adds. Read this before you post or submit.
       </PageHeader>
 

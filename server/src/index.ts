@@ -54,8 +54,9 @@ app.get('/api/health', async (_req: Request, res: Response) => {
   }
 })
 
-app.use('/api', (_req: Request, res: Response, next: NextFunction) => {
-  if (state.ready) return next()
+app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+  // Configuration needs no database, so the site can still describe the deployment while PostgreSQL comes up.
+  if (state.ready || req.path === '/config') return next()
   res.setHeader('Retry-After', '5')
   res.status(503).json({ error: 'The service is starting. Try again in a few seconds.' })
 })
@@ -95,19 +96,19 @@ async function initialize(): Promise<void> {
       startIndexer()
       state.ready = true
       state.lastError = null
-      console.log('[FixBounty] Database ready')
+      console.log('[BountyFi] Database ready')
       return
     } catch (err) {
       const e = err as Error & { code?: string }
       state.lastError = `${e.code ? `${e.code}: ` : ''}${e.message}`
-      console.error(`[FixBounty] Database setup failed (attempt ${attempt}) for ${describeDatabase()}: ${state.lastError}`)
+      console.error(`[BountyFi] Database setup failed (attempt ${attempt}) for ${describeDatabase()}: ${state.lastError}`)
       await sleep(Math.min(3_000 * attempt, 15_000))
     }
   }
 }
 
 app.listen(config.port, '0.0.0.0', () => {
-  console.log(`[FixBounty] Listening on :${config.port} (${config.isProduction ? 'production' : 'development'})`)
-  console.log(`[FixBounty] Database: ${describeDatabase()}`)
+  console.log(`[BountyFi] Listening on :${config.port} (${config.isProduction ? 'production' : 'development'})`)
+  console.log(`[BountyFi] Database: ${describeDatabase()}`)
   void initialize()
 })

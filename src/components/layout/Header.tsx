@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
-import { Bug, ChevronDown, Menu, X } from 'lucide-react'
+import { ChevronDown, Menu, X } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useIdentity } from '@/contexts/IdentityContext'
 import { AccountPanel } from '@/components/layout/AccountPanel'
@@ -19,11 +19,11 @@ const NAV = [
 
 function Logo() {
   return (
-    <Link to="/" className="flex shrink-0 items-center gap-2 font-display text-xl font-bold tracking-tight">
-      <span className="grid size-8 place-items-center rounded border-2 border-ink bg-signal shadow-hard-sm">
-        <Bug size={18} strokeWidth={2.5} aria-hidden />
+    <Link to="/" aria-label="BountyFi home" className="flex shrink-0 items-center gap-2.5 font-display text-xl font-bold tracking-tight">
+      <img src="/brand/mark.png" alt="" width={36} height={36} className="size-9 rounded border-2 border-ink" />
+      <span>
+        Bounty<span className="rounded-sm bg-signal px-1">Fi</span>
       </span>
-      FixBounty
     </Link>
   )
 }

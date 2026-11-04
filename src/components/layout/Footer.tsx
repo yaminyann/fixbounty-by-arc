@@ -1,68 +1,102 @@
+import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { Bug } from 'lucide-react'
 import { useAppConfig } from '@/lib/api/queries'
-import { explorerAddress } from '@/lib/chain'
+import { appChain, explorerAddress } from '@/lib/chain'
 import { shortAddress } from '@/lib/money'
+
+const YEAR = new Date().getFullYear()
+
+const LINK = 'text-sm text-white/70 underline-offset-4 hover:text-white hover:underline'
+
+function Column({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <nav aria-label={title} className="space-y-4">
+      <p className="text-sm font-bold text-white">{title}</p>
+      <ul className="space-y-2.5">{children}</ul>
+    </nav>
+  )
+}
+
+function ExternalItem({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <li>
+      <a href={href} target="_blank" rel="noopener noreferrer" className={LINK}>
+        {children}
+      </a>
+    </li>
+  )
+}
 
 export function Footer() {
   const config = useAppConfig()
   const contract = config.data?.contractAddress
+  const treasury = config.data?.treasuryAddress
 
   return (
-    <footer className="mt-20 border-t-2 border-ink bg-white">
-      <div className="mx-auto grid max-w-6xl gap-8 px-4 py-10 md:grid-cols-[1.3fr_1fr_1fr]">
-        <div className="space-y-3">
-          <p className="flex items-center gap-2 font-display text-lg font-bold">
-            <span className="grid size-7 place-items-center rounded border-2 border-ink bg-signal">
-              <Bug size={14} strokeWidth={2.5} aria-hidden />
-            </span>
-            FixBounty
-          </p>
-          <p className="max-w-xs text-sm text-mute">
-            Prizes for open-source fixes, held in a smart contract until the maintainer picks the winners.
-          </p>
-          <p className="text-sm text-mute">
-            Built by{' '}
-            <a
-              href="https://www.linkedin.com/in/yaminyann/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-bold text-ink underline decoration-2 underline-offset-2 hover:bg-signal"
-            >
-              Yamin
-            </a>
-          </p>
+    <footer className="on-ink mt-24 bg-ink text-white">
+      <div className="mx-auto max-w-6xl px-4 pb-8 pt-14">
+        <div className="grid gap-12 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
+          <div className="space-y-5">
+            <Link to="/" aria-label="BountyFi home" className="inline-block">
+              <img src="/brand/lockup.png" alt="BountyFi" width={760} height={286} className="h-auto w-52" />
+            </Link>
+            <p className="max-w-xs text-sm text-white/70">
+              An escrow board for open-source bug fixes. Prizes stay in a smart contract until the maintainer picks the winners.
+            </p>
+            <p className="text-sm font-bold">
+              <a href="https://bountyfi.xyz" className="text-signal underline-offset-4 hover:underline">
+                bountyfi.xyz
+              </a>
+            </p>
+          </div>
+
+          <Column title="Product">
+            <li>
+              <Link className={LINK} to="/explore">
+                Explore bounties
+              </Link>
+            </li>
+            <li>
+              <Link className={LINK} to="/create">
+                Post a bounty
+              </Link>
+            </li>
+            <li>
+              <Link className={LINK} to="/dashboard">
+                Dashboard
+              </Link>
+            </li>
+            <li>
+              <Link className={LINK} to="/activity">
+                Activity
+              </Link>
+            </li>
+          </Column>
+
+          <Column title="Learn">
+            <li>
+              <Link className={LINK} to="/help">
+                How it works
+              </Link>
+            </li>
+            <li>
+              <Link className={LINK} to="/help">
+                Fees and rules
+              </Link>
+            </li>
+            <ExternalItem href="https://faucet.circle.com">Get test USDC</ExternalItem>
+          </Column>
+
+          <Column title="On-chain">
+            <li className="text-sm text-white/70">Network: {appChain.name}</li>
+            {contract && <ExternalItem href={explorerAddress(contract)}>Contract {shortAddress(contract)}</ExternalItem>}
+            {treasury && <ExternalItem href={explorerAddress(treasury)}>Fee wallet {shortAddress(treasury)}</ExternalItem>}
+          </Column>
         </div>
 
-        <nav aria-label="Footer" className="space-y-2 text-sm">
-          <p className="font-bold">Product</p>
-          <ul className="space-y-1.5 text-mute">
-            <li><Link className="hover:text-ink hover:underline" to="/explore">Explore bounties</Link></li>
-            <li><Link className="hover:text-ink hover:underline" to="/create">Post a bounty</Link></li>
-            <li><Link className="hover:text-ink hover:underline" to="/activity">Activity</Link></li>
-            <li><Link className="hover:text-ink hover:underline" to="/help">How it works and fees</Link></li>
-          </ul>
-        </nav>
-
-        <div className="space-y-2 text-sm">
-          <p className="font-bold">On-chain</p>
-          <ul className="space-y-1.5 text-mute">
-            <li>Network: Arc Testnet</li>
-            <li>Test USDC has no real value</li>
-            {contract && (
-              <li>
-                Contract{' '}
-                <a
-                  href={explorerAddress(contract)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="num text-ink underline underline-offset-2"
-                >
-                  {shortAddress(contract)}
-                </a>
-              </li>
-            )}
-          </ul>
+        <div className="mt-12 flex flex-wrap items-center justify-between gap-3 border-t border-white/15 pt-6 text-xs text-white/60">
+          <p>© {YEAR} BountyFi. All rights reserved.</p>
+          <p>{appChain.testnet ? 'Test USDC on Arc Testnet has no real value.' : 'Transactions are final and settle on-chain.'}</p>
         </div>
       </div>
     </footer>

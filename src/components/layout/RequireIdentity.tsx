@@ -45,7 +45,7 @@ export function RequireIdentity({ children, purpose = 'continue' }: { children: 
   const steps: Record<Exclude<typeof id.status, 'ready' | 'loading'>, { title: string; body: string; action: ReactNode }> = {
     none: {
       title: `Connect your wallet and sign in to ${purpose}`,
-      body: 'FixBounty needs a Google account and a wallet linked together.',
+      body: 'BountyFi needs a Google account and a wallet linked together.',
       action: (
         <div className="flex flex-wrap gap-2">
           <Button variant="primary" onClick={id.connectWallet}>

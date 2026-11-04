@@ -1,6 +1,6 @@
-# FixBounty
+# BountyFi
 
-An escrow board for open-source bug fixes, built on Arc Testnet. A maintainer locks a USDC prize in a smart contract, contributors submit fixes, the maintainer picks the winners, and each winner claims their share from the contract.
+Live at [bountyfi.xyz](https://bountyfi.xyz). An escrow board for open-source bug fixes, built on Arc Testnet. A maintainer locks a USDC prize in a smart contract, contributors submit fixes, the maintainer picks the winners, and each winner claims their share from the contract.
 
 ## How it works
 
@@ -67,6 +67,9 @@ Never pass a private key on the command line. Fund the deployer from the [Circle
 If the ABI changes: `forge build && bun run abi` regenerates `src/lib/bountyBoardAbi.ts` and `server/src/abi.ts`.
 
 ## Deploying the site
+
+- **Domain and sign-in:** point `bountyfi.xyz` (and `www`) at the site, then add both under Firebase Authentication, Settings, Authorized domains, or Google sign-in will be refused.
+- **Brand assets:** the source logos are in `brand/`. `python scripts/generate-brand-assets.py` rebuilds the favicons, header mark, footer lockup and social image in `public/`.
 
 - **Coolify:** use `docker-compose.coolify.yml`. Create a PostgreSQL resource, set `DATABASE_URL` to it, the API joins Coolify's shared `coolify` network automatically, so it reaches that database by its internal hostname, and provide the variables from `.env.example`.
 - **Single machine:** `docker-compose.yml` runs PostgreSQL, the API and nginx together. `./deploy-coolify.sh` validates `.env`, builds, and waits for health.

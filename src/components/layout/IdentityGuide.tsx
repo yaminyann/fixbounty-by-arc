@@ -9,7 +9,7 @@ import { shortAddress } from '@/lib/money'
 const COPY: Partial<Record<IdentityStatus, { title: string; body: string }>> = {
   needs_google: {
     title: 'Sign in with Google to finish setup',
-    body: 'Your wallet is connected. FixBounty ties every wallet to a Google account, so each action can be traced to one person.',
+    body: 'Your wallet is connected. BountyFi ties every wallet to a Google account, so each action can be traced to one person.',
   },
   needs_wallet: {
     title: 'Connect your wallet to finish setup',
