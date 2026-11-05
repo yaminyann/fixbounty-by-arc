@@ -22,6 +22,7 @@ publicRouter.get(
       claimGraceSeconds: 7 * 24 * 3600,
       reviewSeconds: 7 * 24 * 3600,
       maxWinners: 10,
+      onramp: config.onramp.apiKey !== null,
     })
   }),
 )

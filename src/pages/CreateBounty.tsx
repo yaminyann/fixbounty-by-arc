@@ -83,8 +83,11 @@ export default function CreateBounty() {
   // Links from a project or a recurring program prefill the form.
   const [form, setForm] = useState<FormState>(() => ({
     ...EMPTY,
-    title: params.get('title') ?? '',
+    title: (params.get('title') ?? '').slice(0, 200),
     reward: params.get('reward') ?? '',
+    // Links from the GitHub bot: the issue, and the issue's labels as tags.
+    links: /^https?:\/\/\S+$/i.test(params.get('link') ?? '') ? (params.get('link') as string) : '',
+    tags: (params.get('tags') ?? '').slice(0, 120),
     listing: {
       ...EMPTY_LISTING,
       project: params.get('project') ?? '',

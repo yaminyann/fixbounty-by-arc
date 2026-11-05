@@ -35,6 +35,13 @@ const EnvSchema = z.object({
   TREASURY_ADDRESS: address,
   EXPLORER_URL: z.string().url().default('https://explorer.testnet.arc.io'),
 
+  /** Circle Onramp: card and bank purchases of USDC. Server-side secret, never a VITE_ variable. Blank turns the feature off. */
+  ONRAMP_API_KEY: z.preprocess(emptyToUndefined, z.string().min(10).optional()),
+  ONRAMP_CHAIN: z.string().default('arc'),
+  /** Test hooks: where the session is minted and where the hosted widget lives. */
+  ONRAMP_API_URL: z.string().url().default('https://api.circle.com'),
+  ONRAMP_WIDGET_URL: z.string().url().default('https://onramp.arc.io'),
+
   INDEXER_ENABLED: z
     .string()
     .default('true')
@@ -100,6 +107,12 @@ export const config = {
     contractAddress: env.BOUNTY_BOARD_ADDRESS ?? null,
     usdcAddress: env.USDC_ADDRESS,
     treasuryAddress: env.TREASURY_ADDRESS,
+  },
+  onramp: {
+    apiKey: env.ONRAMP_API_KEY ?? null,
+    chain: env.ONRAMP_CHAIN,
+    apiUrl: env.ONRAMP_API_URL.replace(/\/$/, ''),
+    widgetUrl: env.ONRAMP_WIDGET_URL.replace(/\/$/, ''),
   },
   indexer: {
     enabled: env.INDEXER_ENABLED,

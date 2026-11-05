@@ -1,0 +1,14 @@
+name: BountyFi bounty command
+description: Reply to "/bounty 200" on an issue with a pre-filled BountyFi "Post a bounty" link.
+author: BountyFi
+runs:
+  using: composite
+  steps:
+    - name: Reply with the link
+      shell: bash
+      run: node "${{ github.action_path }}/bot.mjs"
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+branding:
+  icon: award
+  color: yellow

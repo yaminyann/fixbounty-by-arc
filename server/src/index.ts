@@ -21,6 +21,7 @@ import { alertsRouter, badgeRouter, creatorsRouter, encryptionRouter, submission
 import { applicationsRouter } from './routes/applications.js'
 import { adminDisputesRouter, disputesRouter } from './routes/disputes.js'
 import { leaderboardRouter, projectInsightsRouter } from './routes/insights.js'
+import { onrampRouter } from './routes/onramp.js'
 import { startIndexer } from './services/indexer.js'
 
 const app = express()
@@ -82,6 +83,7 @@ app.use('/api/me/notifications', notificationsRouter)
 app.use('/api/me/profile', myProfileRouter)
 app.use('/api/me/encryption-key', encryptionRouter)
 app.use('/api/me/saved-searches', alertsRouter)
+app.use('/api/me/onramp', onrampRouter)
 app.use('/api/me', meRouter)
 app.use('/api/reviews', reviewsRouter)
 app.use('/api/projects', projectsRouter)

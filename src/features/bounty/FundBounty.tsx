@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/Button'
 import { Callout } from '@/components/ui/Feedback'
+import { BuyUsdc } from './BuyUsdc'
 import { FeeLedger } from '@/components/bounty/FeeLedger'
 import { useTx, useUsdcAccount } from '@/hooks/useBountyContract'
 import { useRefreshBounty } from '@/lib/api/queries'
@@ -64,6 +65,9 @@ export function FundBounty({ bounty }: { bounty: BountyDetail }) {
             Get test USDC from the Circle faucet
           </a>
           .
+          <div className="mt-3">
+            <BuyUsdc />
+          </div>
         </Callout>
       )}
       <Button variant="primary" className="w-full" size="lg" loading={tx.pending} disabled={short} onClick={() => void fund()}>

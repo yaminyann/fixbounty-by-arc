@@ -5,6 +5,7 @@ import http from 'node:http'
 /** Local stand-ins for GitHub's API and a chat webhook, started before the API so its environment can point at them. */
 export async function startFakes() {
   const hooks = []
+  const onramp = []
   const github = http.createServer((req, res) => {
     const m = /^\/repos\/[^/]+\/[^/]+\/pulls\/(\d+)$/.exec(req.url ?? '')
     res.setHeader('content-type', 'application/json')
@@ -26,9 +27,21 @@ export async function startFakes() {
       res.end('ok')
     })
   })
+  // Circle's Onramp session endpoint: records what the server sends and answers like the real one.
+  const circle = http.createServer((req, res) => {
+    let body = ''
+    req.on('data', (c) => (body += c))
+    req.on('end', () => {
+      onramp.push({ url: req.url, method: req.method, auth: req.headers.authorization, body: JSON.parse(body || '{}') })
+      res.setHeader('content-type', 'application/json')
+      res.statusCode = 201
+      res.end(JSON.stringify({ data: { sessionToken: 'lc_test_session_token', expiresAt: '2030-01-01T00:00:00Z' } }))
+    })
+  })
+  await new Promise((r) => circle.listen(9924, '127.0.0.1', r))
   await new Promise((r) => github.listen(9922, '127.0.0.1', r))
   await new Promise((r) => hook.listen(9923, '127.0.0.1', r))
-  return { hooks, close: () => Promise.all([new Promise((r) => github.close(r)), new Promise((r) => hook.close(r))]) }
+  return { hooks, onramp, close: () => Promise.all([new Promise((r) => github.close(r)), new Promise((r) => hook.close(r)), new Promise((r) => circle.close(r))]) }
 }
 
 export async function runTrustChecks(ctx, fakes) {

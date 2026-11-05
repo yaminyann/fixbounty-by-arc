@@ -15,6 +15,7 @@ BountyFi is a work and contribution platform, not only a bug board. Application-
 - `server/test/ecosystem.mjs` extends the end-to-end run; keep it passing.
 - Applications, disputes, webhooks, analytics (migration 006): `routes/{applications,disputes,insights}.ts`, `services/webhooks.ts`. Applications and disputes are coordination and mediation records only; they never block a submission or move USDC. Project webhooks go only to allowlisted chat hosts and are sent after the indexer commits. `server/test/insights.mjs` covers them. The leaderboard honours `hide_from_leaderboard`.
 - Trust and teamwork (migration 005, `routes/trust.ts`, `services/{github,alerts}.ts`, `lib/crypto.ts`): creator record from chain events, GitHub PR checks (only github.com pull links are fetched), README badge, encrypted reports (WebCrypto in the browser; the server only ever stores ciphertext and a signature-wrapped private key), saved searches with allowlisted webhooks, project member roles. Project members review but never pick winners: only the bounty's creator wallet can call `approveWinners`. `server/test/trust.mjs` covers all of it. Optional env: `GITHUB_API_URL`, `ALERT_WEBHOOK_HOSTS` (tests only).
+- Card purchases of USDC: `routes/onramp.ts`, `services/onramp.ts`, `features/bounty/BuyUsdc.tsx`. Circle Onramp session for the user's own verified wallet; the API key `ONRAMP_API_KEY` is server-only. The contract is untouched. `server/test/insights.mjs` covers it.
 
 ## Tech stack
 

@@ -173,5 +173,22 @@ export async function runInsightChecks(ctx, fakes) {
   r = await api('GET', '/leaderboard')
   check('opted-out contributors disappear from the leaderboard', !r.body.items.some((x) => x.wallet === accounts.alice.address.toLowerCase()), r.body.items.length)
   await api('POST', '/me/profile', { auth: tok.alice, body: { displayName: 'Alice Dev', githubUrl: 'https://github.com/alice-j', hideFromLeaderboard: false } })
+
+  // ---- buy USDC with a card --------------------------------------------------------------------------------------
+  r = await api('GET', '/config')
+  check('the config says card purchases are available', r.body.onramp === true, r.body)
+  r = await api('POST', '/me/onramp/session', { body: {} })
+  check('buying USDC needs a signed-in account', r.status === 401, r.body)
+  r = await api('POST', '/me/onramp/session', { auth: tok.alice, body: { amount: '50; drop table' } })
+  check('the suggested amount is validated', r.status === 400, r.body)
+  fakes.onramp.length = 0
+  r = await api('POST', '/me/onramp/session', { auth: tok.alice, body: { amount: '50' } })
+  check('alice starts a purchase', r.status === 201 && r.body.url === 'https://onramp.arc.io/?sessionToken=lc_test_session_token', r.body)
+  const sent = fakes.onramp[0]
+  check('the server asks Circle for a session with the API key', sent?.url === '/v1/stablecoinKits/sessions' && sent.method === 'POST' && sent.auth === 'Bearer TEST_API_KEY:fake-key-id:fake-key-secret', sent)
+  check('the USDC goes to her own verified wallet on Arc', sent.body.walletAddress === accounts.alice.address.toLowerCase() && sent.body.destinationChain === 'arc' && sent.body.amount === '50', sent.body)
+  r = await api('POST', '/me/onramp/session', { auth: tok.alice, body: { walletAddress: accounts.bob.address } })
+  check('the request cannot pick another destination', r.status === 201 && fakes.onramp.at(-1).body.walletAddress === accounts.alice.address.toLowerCase(), fakes.onramp.at(-1)?.body)
+  check('the key is never sent back to the browser', !JSON.stringify(r.body).includes('fake-key-secret'), r.body)
   void db
 }

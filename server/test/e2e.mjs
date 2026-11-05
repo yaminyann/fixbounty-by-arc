@@ -162,6 +162,8 @@ const server = spawn('node', ['server/dist/index.js'], {
     INDEXER_START_BLOCK: String(boardReceipt.blockNumber),
     INDEXER_POLL_MS: '700',
     GITHUB_API_URL: 'http://127.0.0.1:9922',
+    ONRAMP_API_KEY: 'TEST_API_KEY:fake-key-id:fake-key-secret',
+    ONRAMP_API_URL: 'http://127.0.0.1:9924',
     ALERT_WEBHOOK_HOSTS: '127.0.0.1',
   },
   stdio: ['ignore', 'pipe', 'pipe'],

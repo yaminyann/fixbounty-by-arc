@@ -21,6 +21,8 @@ export interface AppConfig {
   claimGraceSeconds: number
   reviewSeconds: number
   maxWinners: number
+  /** True when the server can start a card or bank purchase of USDC. */
+  onramp?: boolean
 }
 
 export interface BountySummary {
