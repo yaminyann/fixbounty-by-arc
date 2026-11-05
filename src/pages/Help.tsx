@@ -95,6 +95,22 @@ export default function Help() {
           </dl>
         </div>
 
+        <div id="security" className="scroll-mt-24">
+          <h2 className="mb-3 font-display text-2xl font-semibold">What your wallet is asked to do</h2>
+          <p className="mb-4 max-w-2xl text-mute">
+            BountyFi never asks for a seed phrase or private key, and it cannot move your funds on its own. These are the only requests your wallet will show.
+          </p>
+          <dl>
+            <Rule term="Connect">Shares your public address so the site can show your bounties. It grants no spending rights.</Rule>
+            <Rule term="Sign a message">One free signature links your wallet to your Google account. It is plain text, valid for 5 minutes, and sends no transaction.</Rule>
+            <Rule term="Approve USDC">Only when you fund a bounty, and only for that bounty's exact total (prize plus the 0.5% fee). There is never an unlimited approval.</Rule>
+            <Rule term="Contract calls">Create, fund, submit, pick winners, claim and reclaim, each sent to the BountyBoard contract listed below. The contract has no owner and no function that can take other people's funds.</Rule>
+          </dl>
+          <p className="mt-3 max-w-2xl text-sm text-mute">
+            Some wallets warn about new or unfamiliar domains before they have had time to review them. If you see a warning for bountyfi.xyz, check the contract and fee wallet addresses below against the explorer before you continue, or stay on test funds only. Report security issues through the address in <a className="font-semibold underline" href="/.well-known/security.txt">security.txt</a>.
+          </p>
+        </div>
+
         <div>
           <h2 className="mb-3 font-display text-2xl font-semibold">Trust and limits</h2>
           <ul className="max-w-2xl list-disc space-y-2 pl-5 text-mute">
