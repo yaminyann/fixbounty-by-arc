@@ -32,16 +32,18 @@ workspaceRouter.get(
       query(
         `SELECT
            (SELECT COUNT(*)::int FROM submissions s JOIN bounties b ON b.id = s.bounty_id
-             WHERE b.creator_wallet = $1 AND b.onchain_status IN (1, 2) AND s.notes_verified AND s.review_status = 'submitted') AS "submissionsToReview",
+             WHERE (b.creator_wallet = $1 OR b.project_id IN (SELECT id FROM projects WHERE owner_user_id = $2 UNION SELECT project_id FROM project_members WHERE user_id = $2))
+               AND b.onchain_status IN (1, 2) AND s.notes_verified AND s.review_status = 'submitted') AS "submissionsToReview",
            (SELECT COUNT(*)::int FROM milestone_submissions ms JOIN bounty_milestones m ON m.id = ms.milestone_id JOIN bounties b ON b.id = m.bounty_id
-             WHERE b.creator_wallet = $1 AND b.onchain_status IN (1, 2) AND ms.review_status = 'submitted') AS "milestonesToReview",
+             WHERE (b.creator_wallet = $1 OR b.project_id IN (SELECT id FROM projects WHERE owner_user_id = $2 UNION SELECT project_id FROM project_members WHERE user_id = $2))
+               AND b.onchain_status IN (1, 2) AND ms.review_status = 'submitted') AS "milestonesToReview",
            (SELECT COUNT(*)::int FROM submissions s JOIN bounties b ON b.id = s.bounty_id
              WHERE b.creator_wallet = $1 AND b.onchain_status IN (1, 2) AND s.review_status = 'changes_requested') AS "waitingOnContributors",
            (SELECT COUNT(*)::int FROM bounty_team_members t JOIN bounties b ON b.id = t.bounty_id
              WHERE b.creator_wallet = $1 AND t.status = 'requested') AS "teamRequests",
            (SELECT COUNT(DISTINCT s.submitter_wallet)::int FROM submissions s JOIN bounties b ON b.id = s.bounty_id
              WHERE b.creator_wallet = $1 AND b.onchain_status IN (1, 2)) AS "activeContributors"`,
-        [wallet],
+        [wallet, userId],
       ),
       query(
         `SELECT a.id, a.onchain_id::int AS "onchainId", a.kind, a.actor_wallet AS "actorWallet", a.position, a.amount::text AS amount,
@@ -107,12 +109,15 @@ workspaceRouter.get(
   route(async (req: Request, res: Response) => {
     const rows = await query(
       `SELECT p.id, p.slug, p.name, p.tagline, p.logo_url AS "logoUrl", p.status, p.created_at AS "createdAt",
+              CASE WHEN p.owner_user_id = $1 THEN 'owner' ELSE (SELECT m.role FROM project_members m WHERE m.project_id = p.id AND m.user_id = $1) END AS role,
               (SELECT COUNT(*)::int FROM bounties b WHERE b.project_id = p.id) AS "bountyCount",
               (SELECT COUNT(*)::int FROM bounties b WHERE b.project_id = p.id AND b.onchain_status = 1 AND b.deadline > NOW() AND b.moderation_status = 'approved') AS "openCount",
               (SELECT COUNT(*)::int FROM recurring_programs r WHERE r.project_id = p.id AND r.active) AS "programCount",
               (SELECT COUNT(*)::int FROM submissions s JOIN bounties b ON b.id = s.bounty_id
                 WHERE b.project_id = p.id AND b.onchain_status IN (1, 2) AND s.notes_verified AND s.review_status = 'submitted') AS "toReview"
-         FROM projects p WHERE p.owner_user_id = $1 ORDER BY p.created_at DESC`,
+         FROM projects p
+        WHERE p.owner_user_id = $1 OR EXISTS (SELECT 1 FROM project_members m WHERE m.project_id = p.id AND m.user_id = $1)
+        ORDER BY p.created_at DESC`,
       [req.user!.id],
     )
     res.setHeader('Cache-Control', 'private, no-store')
@@ -134,9 +139,10 @@ workspaceRouter.get(
          FROM submissions s JOIN bounties b ON b.id = s.bounty_id
          LEFT JOIN users u ON u.id = COALESCE(s.submitter_user_id, (SELECT user_id FROM wallets WHERE address = s.submitter_wallet))
          LEFT JOIN contributor_profiles cp ON cp.user_id = u.id
-        WHERE b.creator_wallet = $1 AND s.notes_verified
+        WHERE (b.creator_wallet = $1 OR b.project_id IN (SELECT id FROM projects WHERE owner_user_id = $3 UNION SELECT project_id FROM project_members WHERE user_id = $3))
+          AND s.notes_verified
         ORDER BY s.created_at DESC LIMIT $2`,
-      [req.wallet, limit],
+      [req.wallet, limit, req.user!.id],
     )
     const milestones = await query(
       `SELECT ms.id, 'milestone_submission' AS type, b.onchain_id::int AS "onchainId", b.title AS "bountyTitle", m.title AS "milestoneTitle",
@@ -147,9 +153,9 @@ workspaceRouter.get(
          FROM milestone_submissions ms JOIN bounty_milestones m ON m.id = ms.milestone_id JOIN bounties b ON b.id = m.bounty_id
          LEFT JOIN users u ON u.id = COALESCE(ms.submitter_user_id, (SELECT user_id FROM wallets WHERE address = ms.submitter_wallet))
          LEFT JOIN contributor_profiles cp ON cp.user_id = u.id
-        WHERE b.creator_wallet = $1
+        WHERE (b.creator_wallet = $1 OR b.project_id IN (SELECT id FROM projects WHERE owner_user_id = $3 UNION SELECT project_id FROM project_members WHERE user_id = $3))
         ORDER BY ms.created_at DESC LIMIT $2`,
-      [req.wallet, limit],
+      [req.wallet, limit, req.user!.id],
     )
     const items = [...subs.rows, ...milestones.rows].sort((a, b) => new Date(b.createdAt as string).getTime() - new Date(a.createdAt as string).getTime())
     res.setHeader('Cache-Control', 'private, no-store')

@@ -9,6 +9,7 @@ import { TtlCache } from '../lib/limits.js'
 import { indexerStatus } from '../services/indexer.js'
 import { BOUNTY_LIST_COLUMNS, toTsQuery } from '../services/projections.js'
 import { notify } from '../services/notify.js'
+import { notifySavedSearches } from '../services/alerts.js'
 
 export const adminRouter = Router()
 
@@ -211,6 +212,8 @@ adminRouter.post(
         link: `/bounty/${onchainId}`,
       })
     }
+
+    if (decision === 'approved') void notifySavedSearches(bounty.id)
 
     res.json({ onchainId, moderationStatus: decision })
   }),

@@ -1,10 +1,11 @@
 import { useState, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { ChevronLeft, Pencil, Users } from 'lucide-react'
+import { ChevronLeft, GitMerge, GitPullRequest, Lock, Pencil, Users } from 'lucide-react'
 import { RequireIdentity } from '@/components/layout/RequireIdentity'
 import { PrizeLadder } from '@/components/bounty/PrizeLadder'
 import { ModerationBadge, StatusBadge } from '@/components/bounty/StatusBadge'
 import { ActivityList } from '@/components/ecosystem/ActivityList'
+import { CreatorRecord } from '@/components/ecosystem/CreatorRecord'
 import { CategoryChip, DifficultyBadge, ProjectAvatar, ReviewBadge } from '@/components/ecosystem/badges'
 import { AddressChip, Avatar } from '@/components/ui/Address'
 import { Button, ButtonLink, ExternalLink } from '@/components/ui/Button'
@@ -17,11 +18,15 @@ import { ReviewDialog } from '@/features/bounty/ReviewDialog'
 import { SelectWinners } from '@/features/bounty/SelectWinners'
 import { ClaimPrize, ReclaimFunds } from '@/features/bounty/Settlement'
 import { SubmitWork } from '@/features/bounty/SubmitWork'
+import { useEncryption } from '@/features/bounty/useEncryption'
 import { TeamPanel } from '@/features/bounty/TeamPanel'
 import { useNow } from '@/hooks/useNow'
 import { useIdentity } from '@/contexts/IdentityContext'
 import { useActivity, useBounty, useSubmissions } from '@/lib/api/queries'
-import { useCategories } from '@/lib/api/ecosystem'
+import { useCategories, useCheckPr } from '@/lib/api/ecosystem'
+import { errorMessage } from '@/lib/api/client'
+import { isEncryptedReport } from '@/lib/crypto'
+import { toast } from 'sonner'
 import { ApiError } from '@/lib/api/client'
 import { Status, type BountyDetail as Bounty, type Submission } from '@/lib/api/types'
 import { formatUsdc, ordinal } from '@/lib/money'
@@ -65,8 +70,82 @@ function Evidence({ s }: { s: Submission }) {
   )
 }
 
-function SubmissionItem({ s, self, isCreator, onOpenReview }: { s: Submission; self: boolean; isCreator: boolean; onOpenReview: () => void }) {
-  const canReview = (isCreator || self) && s.notesVerified
+function PrBadge({ s }: { s: Submission }) {
+  if (!s.prState) return null
+  if (s.prState === 'not_found') return <Badge tone="warn">PR not found on GitHub</Badge>
+  const merged = s.prState === 'merged'
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <Badge tone={merged ? 'ok' : s.prState === 'closed' ? 'neutral' : 'info'}>
+        {merged ? <GitMerge size={12} aria-hidden /> : <GitPullRequest size={12} aria-hidden />}
+        {merged ? 'PR merged' : s.prState === 'closed' ? 'PR closed' : 'PR open'}
+      </Badge>
+      {s.prAuthor && (
+        <span className="text-xs text-mute" title="Read from GitHub's public API. A match means the PR author is the GitHub handle on the contributor's profile.">
+          by {s.prAuthor}
+          {s.prAuthorMatchesProfile ? ' (matches profile)' : ''}
+        </span>
+      )}
+    </span>
+  )
+}
+
+function EncryptedReport({ text, isCreator, self }: { text: string; isCreator: boolean; self: boolean }) {
+  const encryption = useEncryption(isCreator)
+  const [plain, setPlain] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const open = async () => {
+    setBusy(true)
+    try {
+      setPlain(await encryption.decrypt(text))
+    } catch (err) {
+      toast.error(errorMessage(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+  if (plain !== null) return <p className="prose-plain rounded-lg bg-paper px-3 py-2 text-sm">{plain}</p>
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-paper px-3 py-2.5 text-sm">
+      <span className="inline-flex items-center gap-2 text-mute">
+        <Lock size={14} aria-hidden />
+        {isEncryptedReport(text) ? (isCreator ? 'Encrypted report. Decrypt it with your wallet.' : self ? 'Encrypted to the creator. Only they can read it.' : 'Encrypted report.') : 'Encrypted report. Only the creator can read it.'}
+      </span>
+      {isCreator && isEncryptedReport(text) && (
+        <Button size="sm" variant="primary" loading={busy} onClick={() => void open()}>
+          Decrypt
+        </Button>
+      )}
+    </div>
+  )
+}
+
+function SubmissionItem({
+  s,
+  self,
+  isCreator,
+  canStaffReview,
+  confidential,
+  onOpenReview,
+}: {
+  s: Submission
+  self: boolean
+  isCreator: boolean
+  canStaffReview: boolean
+  confidential: boolean
+  onOpenReview: () => void
+}) {
+  const canReview = (canStaffReview || self) && s.notesVerified
+  const checkPr = useCheckPr()
+  const githubPr = Boolean(s.pullRequestUrl && /^https:\/\/(www\.)?github\.com\/[^/]+\/[^/]+\/pull\/\d+/.test(s.pullRequestUrl))
+  const runCheck = async () => {
+    try {
+      await checkPr.mutateAsync(s.id)
+      toast.success('Checked on GitHub.')
+    } catch (err) {
+      toast.error(errorMessage(err))
+    }
+  }
   return (
     <li className="space-y-2.5 rounded-lg border border-line bg-surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -84,11 +163,21 @@ function SubmissionItem({ s, self, isCreator, onOpenReview }: { s: Submission; s
       </div>
       {s.description ? (
         <>
-          <p className="prose-plain text-sm">{s.description}</p>
+          {confidential ? <EncryptedReport text={s.description} isCreator={isCreator} self={self} /> : <p className="prose-plain text-sm">{s.description}</p>}
           <Evidence s={s} />
+          {githubPr && (
+            <div className="flex flex-wrap items-center gap-2">
+              <PrBadge s={s} />
+              {(canStaffReview || self) && (
+                <Button size="sm" variant="ghost" loading={checkPr.isPending} onClick={() => void runCheck()}>
+                  {s.prState ? 'Check again' : 'Check on GitHub'}
+                </Button>
+              )}
+            </div>
+          )}
           {canReview && (
-            <Button size="sm" variant={isCreator ? 'secondary' : 'ghost'} onClick={onOpenReview}>
-              {isCreator ? 'Review' : 'Review thread'}
+            <Button size="sm" variant={canStaffReview ? 'secondary' : 'ghost'} onClick={onOpenReview}>
+              {canStaffReview ? 'Review' : 'Review thread'}
               {s.commentCount ? ` (${s.commentCount})` : ''}
             </Button>
           )}
@@ -138,7 +227,7 @@ function ActionPanel({ bounty, submissions, now }: { bounty: Bounty; submissions
           </Callout>
         )
       }
-      return <SubmitWork onchainId={bounty.onchainId} wallet={me} alreadySubmittedOnChain={Boolean(mySubmission)} />
+      return <SubmitWork onchainId={bounty.onchainId} wallet={me} alreadySubmittedOnChain={Boolean(mySubmission)} confidential={bounty.confidential} confidentialKey={bounty.creatorEncryptionKey} />
     }
 
     if (bounty.status === Status.Approved) {
@@ -267,6 +356,11 @@ export default function BountyDetail() {
               <Users size={12} aria-hidden /> Team bounty
             </Badge>
           )}
+          {bounty.confidential && (
+            <Badge>
+              <Lock size={12} aria-hidden /> Encrypted reports
+            </Badge>
+          )}
           <span className="num text-sm text-mute">#{bounty.onchainId}</span>
         </div>
         <h1 className="max-w-4xl font-display text-3xl font-semibold leading-tight sm:text-4xl">{bounty.title}</h1>
@@ -371,7 +465,7 @@ export default function BountyDetail() {
               ) : (
                 <ul className="space-y-3">
                   {submissions.map((s) => (
-                    <SubmissionItem key={s.id} s={s} self={me === s.submitterWallet} isCreator={isCreator} onOpenReview={() => setReviewId(s.id)} />
+                    <SubmissionItem key={s.id} s={s} self={me === s.submitterWallet} isCreator={isCreator} canStaffReview={isCreator || bounty.viewerCanReview} confidential={bounty.confidential} onOpenReview={() => setReviewId(s.id)} />
                   ))}
                 </ul>
               ))}
@@ -403,6 +497,10 @@ export default function BountyDetail() {
 
           <div className="rounded-lg border border-line bg-surface p-5">
             <ActionPanel bounty={bounty} submissions={submissions} now={now} />
+          </div>
+
+          <div className="rounded-lg border border-line bg-surface p-5">
+            <CreatorRecord wallet={bounty.creatorWallet} compact />
           </div>
         </aside>
       </div>

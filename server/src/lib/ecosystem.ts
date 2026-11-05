@@ -46,6 +46,7 @@ export const ListingSchema = z.object({
   recurringProgramId: z.string().uuid().nullish(),
   submissionInstructions: z.string().trim().max(2_000).nullish(),
   eligibility: z.string().trim().max(1_000).nullish(),
+  confidential: z.boolean().default(false),
 })
 export type Listing = z.infer<typeof ListingSchema>
 
@@ -61,6 +62,7 @@ export interface BountyAccessRow {
   metadata_verified: boolean
   work_mode: string
   title: string
+  project_id: string | null
 }
 
 export async function loadBountyAccess(onchainId: number, db: Queryable = { query }): Promise<BountyAccessRow> {
@@ -68,7 +70,7 @@ export async function loadBountyAccess(onchainId: number, db: Queryable = { quer
   if (!contract) throw new HttpError(503, 'Contract is not configured.')
   const res = await db.query<BountyAccessRow>(
     `SELECT id, onchain_id::int AS onchain_id, onchain_status, creator_user_id, creator_wallet, reward_amount::text AS reward_amount,
-            deadline, moderation_status, metadata_verified, work_mode, title
+            deadline, moderation_status, metadata_verified, work_mode, title, project_id
        FROM bounties WHERE contract_address = $1 AND onchain_id = $2`,
     [contract, onchainId],
   )
@@ -110,6 +112,7 @@ export async function resolveListing(
   recurringProgramId: string | null
   submissionInstructions: string | null
   eligibility: string | null
+  confidential: boolean
 }> {
   let category: string | null = null
   if (listing.category) {
@@ -120,15 +123,20 @@ export async function resolveListing(
 
   let projectId: string | null = null
   if (listing.project) {
-    const found = await db.query<{ id: string }>('SELECT id FROM projects WHERE slug = $1 AND owner_user_id = $2', [listing.project, ownerUserId])
-    if (found.rowCount === 0) throw new HttpError(403, 'You can only attach a bounty to a project you own.')
+    const found = await db.query<{ id: string }>(
+      `SELECT p.id FROM projects p
+        WHERE p.slug = $1 AND (p.owner_user_id = $2 OR EXISTS (SELECT 1 FROM project_members m WHERE m.project_id = p.id AND m.user_id = $2 AND m.role = 'manager'))`,
+      [listing.project, ownerUserId],
+    )
+    if (found.rowCount === 0) throw new HttpError(403, 'You can only attach a bounty to a project you own or manage.')
     projectId = found.rows[0].id
   }
 
   let recurringProgramId: string | null = null
   if (listing.recurringProgramId) {
     const found = await db.query<{ id: string; project_id: string }>(
-      'SELECT id, project_id FROM recurring_programs WHERE id = $1 AND owner_user_id = $2',
+      `SELECT r.id, r.project_id FROM recurring_programs r
+        WHERE r.id = $1 AND (r.owner_user_id = $2 OR EXISTS (SELECT 1 FROM project_members m WHERE m.project_id = r.project_id AND m.user_id = $2 AND m.role = 'manager'))`,
       [listing.recurringProgramId, ownerUserId],
     )
     if (found.rowCount === 0) throw new HttpError(403, 'That recurring program is not yours.')
@@ -146,6 +154,7 @@ export async function resolveListing(
     recurringProgramId,
     submissionInstructions: listing.submissionInstructions || null,
     eligibility: listing.eligibility || null,
+    confidential: listing.confidential,
   }
 }
 
@@ -155,3 +164,33 @@ export function likePattern(input: string): string {
 }
 
 export const WALLET_RE = /^0x[0-9a-fA-F]{40}$/
+
+export type ProjectRole = 'owner' | 'manager' | 'reviewer'
+
+/** The caller's role on a project: the owner, an invited manager or reviewer, or null. */
+export async function projectRole(userId: string, projectId: string, db: Queryable = { query }): Promise<ProjectRole | null> {
+  const res = await db.query<{ role: ProjectRole }>(
+    `SELECT 'owner' AS role FROM projects WHERE id = $1 AND owner_user_id = $2
+     UNION ALL
+     SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2
+     LIMIT 1`,
+    [projectId, userId],
+  )
+  return res.rows[0]?.role ?? null
+}
+
+/** Owners and managers can edit a project, its programs and its members. */
+export const canManageProject = (role: ProjectRole | null): boolean => role === 'owner' || role === 'manager'
+
+/** Users who review submissions of a bounty: its creator plus everyone on the bounty's project. */
+export async function reviewerUserIds(bountyRowId: string, db: Queryable = { query }): Promise<string[]> {
+  const res = await db.query<{ id: string }>(
+    `SELECT b.creator_user_id AS id FROM bounties b WHERE b.id = $1 AND b.creator_user_id IS NOT NULL
+     UNION
+     SELECT p.owner_user_id FROM bounties b JOIN projects p ON p.id = b.project_id WHERE b.id = $1 AND p.owner_user_id IS NOT NULL
+     UNION
+     SELECT m.user_id FROM bounties b JOIN project_members m ON m.project_id = b.project_id WHERE b.id = $1`,
+    [bountyRowId],
+  )
+  return res.rows.map((r) => r.id)
+}

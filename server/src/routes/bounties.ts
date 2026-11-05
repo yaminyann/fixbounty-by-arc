@@ -9,7 +9,8 @@ import { TtlCache, rateLimit } from '../lib/limits.js'
 import { BountyMetadataSchema, SubmissionMetadataSchema, bountyCommitment, submissionCommitment } from '../lib/metadata.js'
 import { syncBounty, upsertChainBounty } from '../services/bountySync.js'
 import { nudgeIndexer } from '../services/indexer.js'
-import { DIFFICULTIES, ListingSchema, SLUG_RE, isBountyCreator, likePattern, loadBountyAccess, resolveListing } from '../lib/ecosystem.js'
+import { DIFFICULTIES, ListingSchema, SLUG_RE, isBountyCreator, likePattern, loadBountyAccess, projectRole, resolveListing } from '../lib/ecosystem.js'
+import { checkSubmissionPr } from '../services/github.js'
 import {
   BOUNTY_DETAIL_COLUMNS,
   BOUNTY_DETAIL_FROM,
@@ -189,8 +190,17 @@ bountiesRouter.get(
     // Moderation notes are only for the creator and admins.
     const payload = viewerIsOwner || isAdminUser(req.user) ? bounty : { ...bounty, moderationNote: null }
 
-    res.setHeader('Cache-Control', publiclyVisible && !req.user ? 'public, max-age=3, stale-while-revalidate=15' : 'private, no-store')
-    res.json({ bounty: payload })
+    // Creators and everyone on the bounty's project can review its submissions.
+    let viewerCanReview = viewerIsOwner
+    if (!viewerCanReview && req.user) {
+      const link = await query<{ project_id: string | null }>('SELECT project_id FROM bounties WHERE id = $1', [bounty.id])
+      const projectId = link.rows[0]?.project_id
+      viewerCanReview = projectId ? (await projectRole(req.user.id, projectId)) !== null : false
+    }
+
+    const cacheable = publiclyVisible && !req.user
+    res.setHeader('Cache-Control', cacheable ? 'public, max-age=3, stale-while-revalidate=15' : 'private, no-store')
+    res.json({ bounty: { ...payload, viewerCanReview } })
   }),
 )
 
@@ -218,6 +228,7 @@ bountiesRouter.post(
     const user = req.user!
     const wallet = req.wallet!
     const details = listing ? await resolveListing(listing, user.id) : null
+    if (details?.confidential) await requireEncryptionKey(user.id)
 
     const chain = await readBounty(onchainId)
     if (!chain) throw new HttpError(409, 'Bounty not found on-chain yet. Wait for the transaction to confirm and retry.')
@@ -246,13 +257,18 @@ bountiesRouter.post(
   }),
 )
 
+async function requireEncryptionKey(userId: string): Promise<void> {
+  const key = await query('SELECT 1 FROM encryption_keys WHERE user_id = $1', [userId])
+  if (key.rowCount === 0) throw new HttpError(409, 'Set up your encryption key in Settings before accepting encrypted reports.')
+}
+
 async function writeListing(rowId: string, d: Awaited<ReturnType<typeof resolveListing>>): Promise<void> {
   await query(
     `UPDATE bounties
         SET category = $2, difficulty = $3, skills = $4, work_mode = $5, project_id = $6, recurring_program_id = $7,
-            submission_instructions = $8, eligibility = $9, updated_at = NOW()
+            submission_instructions = $8, eligibility = $9, confidential = $10, updated_at = NOW()
       WHERE id = $1`,
-    [rowId, d.category, d.difficulty, d.skills, d.workMode, d.projectId, d.recurringProgramId, d.submissionInstructions, d.eligibility],
+    [rowId, d.category, d.difficulty, d.skills, d.workMode, d.projectId, d.recurringProgramId, d.submissionInstructions, d.eligibility, d.confidential],
   )
   listCache.invalidate()
 }
@@ -272,7 +288,13 @@ bountiesRouter.post(
       const members = await query('SELECT 1 FROM bounty_team_members WHERE bounty_id = $1 AND status = $2 LIMIT 1', [bounty.id, 'active'])
       if ((members.rowCount ?? 0) > 0) throw new HttpError(409, 'Remove the team members before switching back to a solo bounty.')
     }
-    await writeListing(bounty.id, await resolveListing(listing, req.user!.id))
+    const resolved = await resolveListing(listing, req.user!.id)
+    if (resolved.confidential) await requireEncryptionKey(req.user!.id)
+    const current = await query<{ confidential: boolean; submission_count: number }>('SELECT confidential, submission_count FROM bounties WHERE id = $1', [bounty.id])
+    if (current.rows[0] && current.rows[0].confidential !== resolved.confidential && current.rows[0].submission_count > 0) {
+      throw new HttpError(409, 'Encrypted reports cannot be switched on or off after the first submission.')
+    }
+    await writeListing(bounty.id, resolved)
     res.json({ ok: true })
   }),
 )
@@ -328,9 +350,15 @@ bountiesRouter.get(
     // Review progress and comment counts are only for the creator, the contributor themself and admins.
     const viewerWallet = req.user ? await getLinkedWallet(req.user.id) : null
     const reviewer = isAdminUser(req.user) || (viewerWallet !== null && viewerWallet === bounty.creatorWallet)
-    const submissions = (rows.rows as Array<{ submitterWallet: string; reviewStatus: string | null; commentCount: number | null }>).map((row) => {
-      const party = reviewer || (viewerWallet !== null && viewerWallet === row.submitterWallet)
-      return party ? row : { ...row, reviewStatus: null, commentCount: null }
+    const confidential = bounty.confidential === true
+    const projectLink = req.user && !reviewer ? await query<{ project_id: string | null }>('SELECT project_id FROM bounties WHERE id = $1', [bounty.id]) : null
+    const memberRole = projectLink?.rows[0]?.project_id && req.user ? await projectRole(req.user.id, projectLink.rows[0].project_id) : null
+    const staff = reviewer || memberRole !== null
+    const submissions = (rows.rows as Array<{ submitterWallet: string; reviewStatus: string | null; commentCount: number | null; description: string | null }>).map((row) => {
+      const party = staff || (viewerWallet !== null && viewerWallet === row.submitterWallet)
+      if (party) return row
+      // Confidential reports are encrypted, and their ciphertext is shown only to the people who may open them.
+      return { ...row, reviewStatus: null, commentCount: null, description: confidential && row.description ? 'encrypted' : row.description }
     })
     res.setHeader('Cache-Control', 'private, no-store')
     res.json({ submissions })
@@ -358,6 +386,9 @@ bountiesRouter.post(
     const bounty = await loadBountyRow(id)
     if (!bounty || bounty.moderationStatus !== 'approved') throw new HttpError(404, 'Bounty not found')
     if (bounty.creatorWallet === wallet) throw new HttpError(403, 'Creators cannot submit to their own bounty.')
+    if (bounty.confidential === true && !meta.description.startsWith('enc:v1:')) {
+      throw new HttpError(422, 'This bounty only accepts reports encrypted to the creator. Use the submit form so your report is encrypted in your browser.')
+    }
 
     const onchainHash = await readSubmissionHash(id, wallet)
     if (!onchainHash) throw new HttpError(409, 'Submit your work on-chain first, then attach the notes.')
@@ -384,6 +415,9 @@ bountiesRouter.post(
     if (saved.rowCount === 0) throw new HttpError(409, 'Notes were already attached to this submission.')
 
     nudgeIndexer()
+    // Best effort: look up the pull request on GitHub without making the contributor wait for it.
+    const stored = saved.rows[0] as { id: string }
+    void checkSubmissionPr(stored.id, meta.pullRequestUrl).catch(() => undefined)
     res.status(201).json({ ok: true })
   }),
 )

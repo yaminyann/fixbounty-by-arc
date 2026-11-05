@@ -1,5 +1,6 @@
+import { Link } from 'react-router-dom'
 import { Field, Input, Select, Textarea } from '@/components/ui/Form'
-import { useCategories, useMyProjects, useRecurringPrograms, type ListingInput } from '@/lib/api/ecosystem'
+import { useCategories, useEncryptionKey, useMyProjects, useRecurringPrograms, type ListingInput } from '@/lib/api/ecosystem'
 import type { Difficulty, WorkMode } from '@/lib/api/types'
 import { splitTags } from '@/lib/metadata'
 
@@ -13,6 +14,7 @@ export interface ListingForm {
   program: string
   instructions: string
   eligibility: string
+  confidential: boolean
 }
 
 export const EMPTY_LISTING: ListingForm = {
@@ -24,6 +26,7 @@ export const EMPTY_LISTING: ListingForm = {
   program: '',
   instructions: '',
   eligibility: '',
+  confidential: false,
 }
 
 export function toListingInput(form: ListingForm): ListingInput {
@@ -36,6 +39,7 @@ export function toListingInput(form: ListingForm): ListingInput {
     recurringProgramId: form.program || null,
     submissionInstructions: form.instructions.trim() || null,
     eligibility: form.eligibility.trim() || null,
+    confidential: form.confidential,
   }
 }
 
@@ -51,6 +55,7 @@ export function ListingFields({ value, onChange, disabled, compact }: Props) {
   const categories = useCategories()
   const projects = useMyProjects(true)
   const programs = useRecurringPrograms(value.project || undefined)
+  const encryptionKey = useEncryptionKey(true)
   const set = <K extends keyof ListingForm>(key: K, v: ListingForm[K]) => onChange({ ...value, [key]: v })
   const ownPrograms = (programs.data ?? []).filter((p) => p.active)
 
@@ -112,6 +117,33 @@ export function ListingFields({ value, onChange, disabled, compact }: Props) {
           </Select>
         </Field>
       )}
+
+      <div className="rounded-lg border border-line bg-paper p-4">
+        <label className="flex items-start gap-3 text-sm">
+          <input
+            type="checkbox"
+            className="mt-1 size-4 accent-ink"
+            checked={value.confidential}
+            disabled={disabled}
+            onChange={(e) => set('confidential', e.target.checked)}
+          />
+          <span>
+            <span className="block font-medium">Accept encrypted reports only</span>
+            <span className="block text-mute">
+              For security findings. Contributors encrypt their report in the browser to your key, so only you can read it. The server and the public see only ciphertext. It cannot be switched after the first submission.
+            </span>
+          </span>
+        </label>
+        {value.confidential && encryptionKey.data === null && (
+          <p className="mt-3 text-sm font-medium text-warn">
+            You have no encryption key yet.{' '}
+            <Link className="underline" to="/settings#encryption">
+              Set one up in Settings
+            </Link>{' '}
+            before posting.
+          </p>
+        )}
+      </div>
 
       {!compact && (
         <>

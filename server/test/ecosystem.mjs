@@ -195,7 +195,7 @@ export async function runEcosystemChecks(ctx) {
 
   await send('creator', board, boardArtifact.abi, 'approveWinners', [BigInt(id2), [accounts.alice.address]])
   await send('alice', board, boardArtifact.abi, 'claimReward', [BigInt(id2)])
-  await waitFor(async () => (await db.query('SELECT onchain_status FROM bounties WHERE onchain_id = 2')).rows[0]?.onchain_status === 3, 'bounty 2 to be claimed')
+  await waitFor(async () => (await db.query("SELECT 1 FROM bounty_activity WHERE onchain_id = 2 AND kind = 'claimed'")).rowCount > 0, 'the claim of bounty 2 to be indexed')
   r = await api('POST', `/reviews/submission/${aliceSub.id}/decision`, { auth: tok.creator, body: { decision: 'rejected', note: 'Too late.' } })
   check('reviews are frozen once the bounty is closed', r.status === 409, r.body)
 

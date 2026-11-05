@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import pg from 'pg'
 import { SignJWT, exportJWK, generateKeyPair } from 'jose'
 import { runEcosystemChecks } from './ecosystem.mjs'
+import { runTrustChecks, startFakes } from './trust.mjs'
 import { createPublicClient, createWalletClient, http as viemHttp, defineChain } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 
@@ -141,6 +142,7 @@ for (const who of ['creator', 'alice', 'bob', 'carol']) {
 }
 
 // --- start the server -----------------------------------------------------------------
+const fakes = await startFakes()
 const server = spawn('node', ['server/dist/index.js'], {
   cwd: root,
   env: {
@@ -158,6 +160,8 @@ const server = spawn('node', ['server/dist/index.js'], {
     TREASURY_ADDRESS: TREASURY,
     INDEXER_START_BLOCK: String(boardReceipt.blockNumber),
     INDEXER_POLL_MS: '700',
+    GITHUB_API_URL: 'http://127.0.0.1:9922',
+    ALERT_WEBHOOK_HOSTS: '127.0.0.1',
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 })
@@ -168,6 +172,7 @@ server.stderr.on('data', (d) => (serverLog += d))
 async function shutdown(code) {
   server.kill()
   jwksServer.close()
+  await fakes.close().catch(() => undefined)
   await db.end().catch(() => undefined)
   process.exit(code)
 }
@@ -411,6 +416,7 @@ try {
   await Promise.all(Array.from({ length: 60 }, () => api('GET', `/bounties/${onchainId}`)))
   check(`60 parallel detail reads finish under 1.5s (${Date.now() - t1}ms)`, Date.now() - t1 < 1500)
   await runEcosystemChecks({ api, tok, accounts, send, board, boardArtifact, usdc, mock, bountyCommitment, submissionCommitment, check, waitFor, db, reward })
+  await runTrustChecks({ api, tok, accounts, send, board, boardArtifact, usdc, mock, bountyCommitment, submissionCommitment, check, waitFor, db, apiBase: API }, fakes)
 } catch (err) {
   failures += 1
   console.error('\nE2E aborted:', err)

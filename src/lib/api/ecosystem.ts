@@ -265,6 +265,7 @@ export interface MyProject {
   logoUrl: string | null
   status: 'active' | 'hidden'
   createdAt: string
+  role: ProjectRoleName
   bountyCount: number
   openCount: number
   programCount: number
@@ -385,7 +386,7 @@ export function useProject(slug: string | undefined) {
   const { user } = useAuth()
   return useQuery({
     queryKey: ['project', slug, user?.uid ?? 'anon'],
-    queryFn: () => get<{ project: Project; isOwner: boolean }>(`/projects/${slug}`),
+    queryFn: () => get<{ project: Project; isOwner: boolean; role: ProjectRoleName | null }>(`/projects/${slug}`),
     enabled: Boolean(slug),
     retry: (count, err) => (err as { status?: number }).status !== 404 && count < 2,
   })
@@ -571,6 +572,7 @@ export interface ListingInput {
   recurringProgramId: string | null
   submissionInstructions: string | null
   eligibility: string | null
+  confidential: boolean
 }
 
 export const useUpdateListing = () =>
@@ -667,3 +669,87 @@ export function useSetProjectStatus() {
     },
   })
 }
+
+// ----------------------------------------------------------------------------------------------
+// Trust and teamwork
+// ----------------------------------------------------------------------------------------------
+
+export interface CreatorRecord {
+  wallet: string
+  funded: number
+  fundedAmount: string
+  receivedSubmissions: number
+  pickedWinners: number
+  reclaimedAfterSubmissions: number
+  reclaimedWithoutSubmissions: number
+  awaitingDecision: number
+  open: number
+  paidToWinners: string
+  medianDaysToPickWinners: number | null
+}
+
+export interface EncryptionKeyRecord {
+  publicJwk: JsonWebKey
+  wrappedPrivate: string
+  createdAt: string
+}
+
+export interface SavedSearch {
+  id: string
+  name: string
+  filters: { q?: string; category?: string; difficulty?: string; mode?: string; skill?: string; project?: string; min?: number; max?: number }
+  hasWebhook: boolean
+  lastTriggeredAt: string | null
+  lastError: string | null
+  createdAt: string
+}
+
+export type ProjectRoleName = 'owner' | 'manager' | 'reviewer'
+
+export interface ProjectMember {
+  userId: string
+  role: ProjectRoleName
+  wallet: string
+  name: string | null
+  photo: string | null
+  addedAt: string
+}
+
+export function useCreatorRecord(wallet: string | undefined) {
+  return useQuery({
+    queryKey: ['creator', wallet?.toLowerCase()],
+    queryFn: () => get<CreatorRecord>(`/creators/${wallet}`, { auth: false }),
+    enabled: Boolean(wallet),
+    staleTime: 30_000,
+  })
+}
+
+export function useEncryptionKey(enabled: boolean) {
+  return useQuery({ queryKey: ['mine', 'encryption-key'], queryFn: () => get<{ key: EncryptionKeyRecord | null }>('/me/encryption-key').then((r) => r.key), enabled })
+}
+
+export const useSaveEncryptionKey = () => useWrite((input: { publicJwk: JsonWebKey; wrappedPrivate: string }) => post('/me/encryption-key', input))
+
+export function useSavedSearches(enabled: boolean) {
+  return useQuery({ queryKey: ['mine', 'saved-searches'], queryFn: () => get<{ items: SavedSearch[] }>('/me/saved-searches').then((r) => r.items), enabled })
+}
+
+export const useCreateSavedSearch = () => useWrite((input: { name: string; filters: SavedSearch['filters']; webhookUrl?: string }) => post('/me/saved-searches', input))
+
+export const useDeleteSavedSearch = () => useWrite((id: string) => del(`/me/saved-searches/${id}`))
+
+export const useCheckPr = () =>
+  useWrite((id: string) => post<{ state: string; merged: boolean; author: string | null; title: string | null }>(`/submissions/${id}/check-pr`, {}), [['bounty']])
+
+export function useProjectMembers(slug: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['project', slug, 'members'],
+    queryFn: () => get<{ items: ProjectMember[]; yourRole: ProjectRoleName }>(`/projects/${slug}/members`),
+    enabled: Boolean(slug) && enabled,
+  })
+}
+
+export const useAddMember = () =>
+  useWrite(({ slug, ...input }: { slug: string; wallet: string; role: 'manager' | 'reviewer' }) => post(`/projects/${slug}/members`, input), [['project']])
+
+export const useRemoveMember = () => useWrite(({ slug, userId }: { slug: string; userId: string }) => del(`/projects/${slug}/members/${userId}`), [['project']])

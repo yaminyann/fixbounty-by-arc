@@ -18,6 +18,7 @@ function formFrom(bounty: BountyDetail): ListingForm {
     program: bounty.recurringProgramId ?? '',
     instructions: bounty.submissionInstructions ?? '',
     eligibility: bounty.eligibility ?? '',
+    confidential: bounty.confidential,
   }
 }
 

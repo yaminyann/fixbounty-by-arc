@@ -4,6 +4,9 @@ import { Bell, CheckCheck } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { EmptyState, ErrorState, PageHeader, Skeleton } from '@/components/ui/Feedback'
 import { RequireAccount } from '@/components/layout/RequireAccount'
+import { SavedSearchList } from '@/components/ecosystem/SaveSearch'
+import { Tabs } from '@/components/ui/Tabs'
+import { useState } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useMarkRead, useNotifications, type AppNotification } from '@/lib/api/ecosystem'
 import { errorMessage } from '@/lib/api/client'
@@ -65,10 +68,28 @@ function Content() {
 
 export default function Notifications() {
   const { user } = useAuth()
+  const [tab, setTab] = useState<'inbox' | 'alerts'>('inbox')
   return (
     <div>
-      <PageHeader title="Notifications">What happened on your bounties, submissions and teams.</PageHeader>
-      <RequireAccount purpose="see your notifications">{user && <Content />}</RequireAccount>
+      <PageHeader title="Notifications">What happened on your bounties, submissions and teams, and alerts for new bounties.</PageHeader>
+      <RequireAccount purpose="see your notifications">
+        {user && (
+          <div className="space-y-6">
+            <Tabs
+              label="Notification sections"
+              value={tab}
+              onChange={setTab}
+              items={[
+                { value: 'inbox', label: 'Inbox' },
+                { value: 'alerts', label: 'Saved searches' },
+              ]}
+            />
+            <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
+              {tab === 'inbox' ? <Content /> : <SavedSearchList />}
+            </div>
+          </div>
+        )}
+      </RequireAccount>
     </div>
   )
 }

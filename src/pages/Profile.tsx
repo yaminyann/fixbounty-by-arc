@@ -1,5 +1,6 @@
 import { Link, useParams } from 'react-router-dom'
 import { Github, Globe } from 'lucide-react'
+import { CreatorRecord } from '@/components/ecosystem/CreatorRecord'
 import { ProjectAvatar } from '@/components/ecosystem/badges'
 import { AddressChip, Avatar, TxLink } from '@/components/ui/Address'
 import { Badge, EmptyState, ErrorState, Section, Skeleton, SourceBadge, Stat, StatGrid } from '@/components/ui/Feedback'
@@ -89,6 +90,12 @@ export default function Profile() {
         </StatGrid>
         <p className="text-xs text-mute">Numbers count approved, public bounties only. Earnings come from claim events on Arc. There are no ratings or scores.</p>
       </div>
+
+      {p.stats.bountiesPosted > 0 && (
+        <div className="max-w-xl">
+          <CreatorRecord wallet={p.wallet} />
+        </div>
+      )}
 
       {p.achievements.length > 0 && (
         <Section title="Verified achievements" description="Each one points to its evidence.">

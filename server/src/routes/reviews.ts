@@ -4,7 +4,7 @@ import { query, withTransaction } from '../db.js'
 import { isAdminUser, requireAuth, requireLinkedWallet, getLinkedWallet } from '../auth.js'
 import { HttpError, isUuid, parse, route } from '../lib/http.js'
 import { rateLimit } from '../lib/limits.js'
-import { REVIEW_DECISIONS, httpUrl } from '../lib/ecosystem.js'
+import { REVIEW_DECISIONS, httpUrl, projectRole, reviewerUserIds } from '../lib/ecosystem.js'
 import { notify } from '../services/notify.js'
 
 /**
@@ -23,6 +23,8 @@ interface Target {
   bountyStatus: number
   creatorUserId: string | null
   creatorWallet: string
+  projectId: string | null
+  bountyRowId: string
   submitterUserId: string | null
   submitterWallet: string
   reviewStatus: string
@@ -41,12 +43,12 @@ async function loadTarget(type: TargetType, id: string): Promise<Target> {
   const sql =
     type === 'submission'
       ? `SELECT s.id, b.onchain_id::int AS "bountyOnchainId", b.title AS "bountyTitle", b.onchain_status AS "bountyStatus",
-                b.creator_user_id AS "creatorUserId", b.creator_wallet AS "creatorWallet",
+                b.creator_user_id AS "creatorUserId", b.creator_wallet AS "creatorWallet", b.project_id AS "projectId", b.id AS "bountyRowId",
                 s.submitter_user_id AS "submitterUserId", s.submitter_wallet AS "submitterWallet",
                 s.review_status AS "reviewStatus", s.notes_verified AS ready, NULL::uuid AS "milestoneId", NULL::text AS "milestoneTitle"
            FROM submissions s JOIN bounties b ON b.id = s.bounty_id WHERE s.id = $1`
       : `SELECT s.id, b.onchain_id::int AS "bountyOnchainId", b.title AS "bountyTitle", b.onchain_status AS "bountyStatus",
-                b.creator_user_id AS "creatorUserId", b.creator_wallet AS "creatorWallet",
+                b.creator_user_id AS "creatorUserId", b.creator_wallet AS "creatorWallet", b.project_id AS "projectId", b.id AS "bountyRowId",
                 s.submitter_user_id AS "submitterUserId", s.submitter_wallet AS "submitterWallet",
                 s.review_status AS "reviewStatus", TRUE AS ready, m.id AS "milestoneId", m.title AS "milestoneTitle"
            FROM milestone_submissions s JOIN bounty_milestones m ON m.id = s.milestone_id JOIN bounties b ON b.id = m.bounty_id WHERE s.id = $1`
@@ -66,6 +68,8 @@ async function viewerFor(req: Request, target: Target): Promise<Viewer> {
   const wallet = await getLinkedWallet(user.id)
   if (target.creatorUserId === user.id || (wallet !== null && wallet === target.creatorWallet)) return { role: 'reviewer', userId: user.id, wallet }
   if (target.submitterUserId === user.id || (wallet !== null && wallet === target.submitterWallet)) return { role: 'contributor', userId: user.id, wallet }
+  // Everyone on the bounty's project reviews on behalf of the creator (but never their own work, handled above).
+  if (target.projectId && (await projectRole(user.id, target.projectId)) !== null) return { role: 'reviewer', userId: user.id, wallet }
   if (isAdminUser(user)) return { role: 'admin', userId: user.id, wallet }
   // Do not reveal that the submission exists to strangers.
   throw new HttpError(404, 'Submission not found')
@@ -159,13 +163,15 @@ reviewsRouter.post(
         link: link(target),
       })
     } else {
-      await notify({
-        userId: target.creatorUserId,
-        kind: isUpdate ? 'submission_update' : 'review_comment',
-        title: isUpdate ? 'A contributor updated their submission' : 'A contributor replied in a review',
-        body: target.bountyTitle,
-        link: link(target),
-      })
+      for (const reviewer of await reviewerUserIds(target.bountyRowId)) {
+        await notify({
+          userId: reviewer,
+          kind: isUpdate ? 'submission_update' : 'review_comment',
+          title: isUpdate ? 'A contributor updated their submission' : 'A contributor replied in a review',
+          body: target.bountyTitle,
+          link: link(target),
+        })
+      }
     }
     res.status(201).json({ ok: true })
   }),
@@ -191,7 +197,7 @@ reviewsRouter.post(
   route(async (req: Request, res: Response) => {
     const target = await loadTarget(parseType(req.params.type), String(req.params.id))
     const viewer = await viewerFor(req, target)
-    if (viewer.role !== 'reviewer') throw new HttpError(403, 'Only the bounty creator can review submissions.')
+    if (viewer.role !== 'reviewer') throw new HttpError(403, 'Only the bounty creator and members of its project can review submissions.')
     const { decision, note } = parse(DecisionSchema, req.body)
     if ((decision === 'changes_requested' || decision === 'rejected') && note.length < 3) {
       throw new HttpError(400, decision === 'rejected' ? 'Add a short reason so the contributor knows why.' : 'Say what needs to change.')

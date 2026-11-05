@@ -11,6 +11,8 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useIdentity } from '@/contexts/IdentityContext'
 import { errorMessage } from '@/lib/api/client'
 import { useMyProfile, useSaveProfile } from '@/lib/api/ecosystem'
+import { useEncryption } from '@/features/bounty/useEncryption'
+import { formatDate } from '@/lib/time'
 import { splitTags } from '@/lib/metadata'
 
 type ProfileValues = { displayName: string; bio: string; skills: string; websiteUrl: string; githubUrl: string; avatarUrl: string }
@@ -99,6 +101,48 @@ function ProfileFields({ initial }: { initial: ProfileValues }) {
   )
 }
 
+function EncryptionSection() {
+  const id = useIdentity()
+  const encryption = useEncryption(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const create = async () => {
+    setError(null)
+    try {
+      await encryption.setup()
+      toast.success('Encryption key created.')
+    } catch (err) {
+      const message = errorMessage(err)
+      setError(/reject|denied/i.test(message) ? 'You declined the signature request. Nothing was changed.' : message)
+    }
+  }
+
+  if (encryption.loading) return <Skeleton className="h-24 w-full" />
+  if (encryption.key) {
+    return (
+      <Callout tone="ok" title="Your encryption key is set">
+        Created {formatDate(encryption.key.createdAt)}. It is unlocked with a signature from this wallet, so keep using the same wallet. Reports encrypted to this key cannot be read without it, and the key cannot be replaced.
+      </Callout>
+    )
+  }
+  return (
+    <div className="max-w-xl space-y-3">
+      <p className="text-sm text-mute">
+        Needed only if you want to accept confidential security reports. Your browser creates a key pair; the private half is locked with a signature from your wallet before it is stored, so BountyFi never sees it. You sign twice to prove the key can always be unlocked again.
+      </p>
+      {error && (
+        <p role="alert" className="text-sm font-medium text-danger">
+          {error}
+        </p>
+      )}
+      <Button variant="primary" loading={encryption.busy} disabled={id.status !== 'ready'} onClick={() => void create()}>
+        Create encryption key
+      </Button>
+      {id.status !== 'ready' && <p className="text-xs text-mute">Connect and link your wallet first.</p>}
+    </div>
+  )
+}
+
 function Content() {
   const { user, signOut } = useAuth()
   const id = useIdentity()
@@ -121,6 +165,12 @@ function Content() {
       <Section title="Profile" description="What other people see about you.">
         <ProfileForm />
       </Section>
+
+      <div id="encryption" className="scroll-mt-24">
+        <Section title="Encryption key" description="For confidential security reports.">
+          <EncryptionSection />
+        </Section>
+      </div>
 
       <Section title="Google account">
         {user && (

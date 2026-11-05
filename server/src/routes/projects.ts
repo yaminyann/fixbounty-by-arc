@@ -4,7 +4,8 @@ import { query } from '../db.js'
 import { isAdminUser, optionalAuth, requireAuth, requireLinkedWallet } from '../auth.js'
 import { HttpError, clampInt, parse, queryString, route } from '../lib/http.js'
 import { TtlCache, rateLimit } from '../lib/limits.js'
-import { CADENCES, RESERVED_SLUGS, SLUG_RE, likePattern, optionalUrl } from '../lib/ecosystem.js'
+import { CADENCES, RESERVED_SLUGS, SLUG_RE, WALLET_RE, canManageProject, likePattern, optionalUrl, projectRole } from '../lib/ecosystem.js'
+import { notify } from '../services/notify.js'
 
 export const projectsRouter = Router()
 export const recurringRouter = Router()
@@ -38,9 +39,10 @@ async function loadProject(slug: string, req: Request) {
   const project = res.rows[0]
   if (!project) throw new HttpError(404, 'Project not found')
   const isOwner = Boolean(req.user && project.owner_user_id === req.user.id)
-  if (project.status !== 'active' && !isOwner && !isAdminUser(req.user)) throw new HttpError(404, 'Project not found')
+  const role = req.user ? await projectRole(req.user.id, project.id) : null
+  if (project.status !== 'active' && role === null && !isAdminUser(req.user)) throw new HttpError(404, 'Project not found')
   const { owner_user_id: _ignored, ...rest } = project
-  return { project: rest, isOwner }
+  return { project: rest, isOwner, role }
 }
 
 // ---------------------------------------------------------------------------
@@ -86,9 +88,9 @@ projectsRouter.get(
   '/:slug',
   optionalAuth,
   route(async (req: Request, res: Response) => {
-    const { project, isOwner } = await loadProject(String(req.params.slug).toLowerCase(), req)
+    const { project, isOwner, role } = await loadProject(String(req.params.slug).toLowerCase(), req)
     res.setHeader('Cache-Control', 'private, no-store')
-    res.json({ project, isOwner })
+    res.json({ project, isOwner, role })
   }),
 )
 
@@ -197,9 +199,9 @@ projectsRouter.get(
   '/:slug/recurring',
   optionalAuth,
   route(async (req: Request, res: Response) => {
-    const { project, isOwner } = await loadProject(String(req.params.slug).toLowerCase(), req)
+    const { project, role } = await loadProject(String(req.params.slug).toLowerCase(), req)
     const rows = await query<{ cadence: string; lastCycleAt: string | null; startedOn: string; active: boolean }>(
-      `SELECT ${PROGRAM_COLUMNS} FROM recurring_programs r WHERE r.project_id = $1 ${isOwner ? '' : 'AND r.active'} ORDER BY r.created_at DESC`,
+      `SELECT ${PROGRAM_COLUMNS} FROM recurring_programs r WHERE r.project_id = $1 ${canManageProject(role) ? '' : 'AND r.active'} ORDER BY r.created_at DESC`,
       [project.id],
     )
     res.setHeader('Cache-Control', 'private, no-store')
@@ -261,12 +263,12 @@ projectsRouter.post(
   route(async (req: Request, res: Response) => {
     const slug = String(req.params.slug).toLowerCase()
     const body = parse(ProjectSchema, req.body)
-    const updated = await query(
-      `UPDATE projects SET name = $3, tagline = $4, description = $5, website_url = $6, github_url = $7, logo_url = $8, updated_at = NOW()
-        WHERE slug = $1 AND owner_user_id = $2 RETURNING id`,
-      [slug, req.user!.id, body.name, body.tagline, body.description, body.websiteUrl, body.githubUrl, body.logoUrl],
+    const target = await query<{ id: string }>('SELECT id FROM projects WHERE slug = $1', [slug])
+    if (!target.rows[0] || !canManageProject(await projectRole(req.user!.id, target.rows[0].id))) throw new HttpError(403, 'Only the project owner or a manager can edit it.')
+    await query(
+      `UPDATE projects SET name = $2, tagline = $3, description = $4, website_url = $5, github_url = $6, logo_url = $7, updated_at = NOW() WHERE id = $1`,
+      [target.rows[0].id, body.name, body.tagline, body.description, body.websiteUrl, body.githubUrl, body.logoUrl],
     )
-    if (updated.rowCount === 0) throw new HttpError(403, 'Only the project owner can edit it.')
     listCache.invalidate()
     res.json({ ok: true })
   }),
@@ -294,8 +296,8 @@ projectsRouter.post(
   requireLinkedWallet,
   route(async (req: Request, res: Response) => {
     const body = parse(ProgramSchema, req.body)
-    const project = await query<{ id: string }>('SELECT id FROM projects WHERE slug = $1 AND owner_user_id = $2', [String(req.params.slug).toLowerCase(), req.user!.id])
-    if (project.rowCount === 0) throw new HttpError(403, 'Only the project owner can add recurring programs.')
+    const project = await query<{ id: string }>('SELECT id FROM projects WHERE slug = $1', [String(req.params.slug).toLowerCase()])
+    if (!project.rows[0] || !canManageProject(await projectRole(req.user!.id, project.rows[0].id))) throw new HttpError(403, 'Only the project owner or a manager can add recurring programs.')
     const category = await assertCategory(body.category)
     const created = await query<{ id: string }>(
       `INSERT INTO recurring_programs (project_id, owner_user_id, title, description, category, cadence, reward_per_cycle)
@@ -318,14 +320,101 @@ recurringRouter.post(
     if (!/^[0-9a-f-]{36}$/i.test(id)) throw new HttpError(400, 'Invalid program id')
     const body = parse(ProgramUpdateSchema, req.body)
     const category = body.category === undefined ? undefined : await assertCategory(body.category)
-    const updated = await query(
+    const program = await query<{ project_id: string }>('SELECT project_id FROM recurring_programs WHERE id = $1', [id])
+    if (!program.rows[0] || !canManageProject(await projectRole(req.user!.id, program.rows[0].project_id))) throw new HttpError(403, 'Only the project owner or a manager can change this program.')
+    await query(
       `UPDATE recurring_programs SET
-          title = COALESCE($3, title), description = COALESCE($4, description), category = CASE WHEN $5::boolean THEN $6 ELSE category END,
-          cadence = COALESCE($7, cadence), reward_per_cycle = COALESCE($8::bigint, reward_per_cycle), active = COALESCE($9, active), updated_at = NOW()
-        WHERE id = $1 AND owner_user_id = $2 RETURNING id`,
-      [id, req.user!.id, body.title ?? null, body.description ?? null, category !== undefined, category ?? null, body.cadence ?? null, body.rewardPerCycle ?? null, body.active ?? null],
+          title = COALESCE($2, title), description = COALESCE($3, description), category = CASE WHEN $4::boolean THEN $5 ELSE category END,
+          cadence = COALESCE($6, cadence), reward_per_cycle = COALESCE($7::bigint, reward_per_cycle), active = COALESCE($8, active), updated_at = NOW()
+        WHERE id = $1`,
+      [id, body.title ?? null, body.description ?? null, category !== undefined, category ?? null, body.cadence ?? null, body.rewardPerCycle ?? null, body.active ?? null],
     )
-    if (updated.rowCount === 0) throw new HttpError(403, 'Only the project owner can change this program.')
+    res.json({ ok: true })
+  }),
+)
+
+// ---------------------------------------------------------------------------
+// Members: managers edit the project, reviewers review submissions of its bounties.
+// Winners are still picked on-chain by the wallet that created each bounty.
+// ---------------------------------------------------------------------------
+
+projectsRouter.get(
+  '/:slug/members',
+  optionalAuth,
+  route(async (req: Request, res: Response) => {
+    const { project, role } = await loadProject(String(req.params.slug).toLowerCase(), req)
+    if (role === null) throw new HttpError(403, 'Only project members can see the member list.')
+    const rows = await query(
+      `SELECT * FROM (
+         SELECT u.id AS "userId", 'owner' AS role, p.owner_wallet AS wallet, u.display_name AS name, u.photo_url AS photo, p.created_at AS "addedAt"
+           FROM projects p JOIN users u ON u.id = p.owner_user_id WHERE p.id = $1
+         UNION ALL
+         SELECT m.user_id, m.role, m.wallet, u.display_name, u.photo_url, m.created_at
+           FROM project_members m JOIN users u ON u.id = m.user_id WHERE m.project_id = $1
+       ) x ORDER BY (role = 'owner') DESC, "addedAt"`,
+      [project.id],
+    )
+    res.setHeader('Cache-Control', 'private, no-store')
+    res.json({ items: rows.rows, yourRole: role })
+  }),
+)
+
+const MemberSchema = z.object({ wallet: z.string().regex(WALLET_RE, 'Enter a full wallet address'), role: z.enum(['manager', 'reviewer']) })
+
+projectsRouter.post(
+  '/:slug/members',
+  rateLimit({ windowMs: 60_000, max: 30 }),
+  requireAuth,
+  requireLinkedWallet,
+  route(async (req: Request, res: Response) => {
+    const { wallet, role } = parse(MemberSchema, req.body)
+    const slug = String(req.params.slug).toLowerCase()
+    const project = await query<{ id: string; name: string; owner_user_id: string | null }>('SELECT id, name, owner_user_id FROM projects WHERE slug = $1', [slug])
+    const p = project.rows[0]
+    if (!p) throw new HttpError(404, 'Project not found')
+    const mine = await projectRole(req.user!.id, p.id)
+    if (!canManageProject(mine)) throw new HttpError(403, 'Only the project owner or a manager can add members.')
+    // Only the owner can appoint managers, so a manager cannot hand out the same power.
+    if (role === 'manager' && mine !== 'owner') throw new HttpError(403, 'Only the owner can add managers.')
+
+    const invitee = await query<{ user_id: string }>('SELECT user_id FROM wallets WHERE address = $1 AND verified', [wallet.toLowerCase()])
+    if (!invitee.rows[0]) throw new HttpError(404, 'That wallet is not linked to a BountyFi account yet. Ask them to sign in and link it first.')
+    if (invitee.rows[0].user_id === p.owner_user_id) throw new HttpError(409, 'That account already owns the project.')
+
+    await query(
+      `INSERT INTO project_members (project_id, user_id, wallet, role, added_by) VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (project_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
+      [p.id, invitee.rows[0].user_id, wallet.toLowerCase(), role, req.user!.id],
+    )
+    await notify({
+      userId: invitee.rows[0].user_id,
+      kind: 'project_member',
+      title: `You were added to ${p.name}`,
+      body: role === 'manager' ? 'Role: manager. You can edit the project and review submissions.' : 'Role: reviewer. You can review submissions of its bounties.',
+      link: `/projects/${slug}`,
+    })
+    res.status(201).json({ ok: true })
+  }),
+)
+
+projectsRouter.delete(
+  '/:slug/members/:userId',
+  rateLimit({ windowMs: 60_000, max: 30 }),
+  requireAuth,
+  route(async (req: Request, res: Response) => {
+    const project = await query<{ id: string }>('SELECT id FROM projects WHERE slug = $1', [String(req.params.slug).toLowerCase()])
+    if (!project.rows[0]) throw new HttpError(404, 'Project not found')
+    const target = String(req.params.userId)
+    if (!/^[0-9a-f-]{36}$/i.test(target)) throw new HttpError(404, 'Member not found')
+    const mine = await projectRole(req.user!.id, project.rows[0].id)
+    const self = target === req.user!.id
+    if (!self && !canManageProject(mine)) throw new HttpError(403, 'Only the project owner or a manager can remove members.')
+    if (!self && mine === 'manager') {
+      const their = await query<{ role: string }>('SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2', [project.rows[0].id, target])
+      if (their.rows[0]?.role === 'manager') throw new HttpError(403, 'Only the owner can remove managers.')
+    }
+    const removed = await query('DELETE FROM project_members WHERE project_id = $1 AND user_id = $2', [project.rows[0].id, target])
+    if (removed.rowCount === 0) throw new HttpError(404, 'Member not found')
     res.json({ ok: true })
   }),
 )

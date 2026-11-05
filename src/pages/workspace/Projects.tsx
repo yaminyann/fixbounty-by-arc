@@ -6,6 +6,8 @@ import { RequireIdentity } from '@/components/layout/RequireIdentity'
 import { ModerationBadge, StatusBadge } from '@/components/bounty/StatusBadge'
 import { CADENCE_LABEL, ProjectAvatar } from '@/components/ecosystem/badges'
 import { Badge, Callout, EmptyState, ErrorState, PageHeader, Section, Skeleton } from '@/components/ui/Feedback'
+import { AddressChip, Avatar, CopyButton } from '@/components/ui/Address'
+import { useConfirm } from '@/components/ui/Confirm'
 import { Button, ButtonLink } from '@/components/ui/Button'
 import { Dialog } from '@/components/ui/Dialog'
 import { Field, Input, Select, Textarea } from '@/components/ui/Form'
@@ -13,14 +15,18 @@ import { Tabs } from '@/components/ui/Tabs'
 import { errorMessage } from '@/lib/api/client'
 import {
   useCategories,
+  useAddMember,
   useCreateProgram,
   useCreateProject,
   useMyProjects,
   useProject,
+  useProjectMembers,
+  useRemoveMember,
   useRecurringPrograms,
   useUpdateProgram,
   useUpdateProject,
   type Cadence,
+  type ProjectMember,
   type RecurringProgram,
 } from '@/lib/api/ecosystem'
 import { useNow } from '@/hooks/useNow'
@@ -62,13 +68,14 @@ function ProjectList() {
     <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface">
       {query.data.map((p) => (
         <li key={p.id}>
-          <Link to={`/workspace/projects/${p.slug}`} className="flex flex-wrap items-center justify-between gap-4 px-4 py-4 hover:bg-ink/[0.02]">
+          <Link to={p.role === 'reviewer' ? `/projects/${p.slug}` : `/workspace/projects/${p.slug}`} className="flex flex-wrap items-center justify-between gap-4 px-4 py-4 hover:bg-ink/[0.02]">
             <span className="flex min-w-0 items-center gap-3">
               <ProjectAvatar name={p.name} logoUrl={p.logoUrl} size={36} />
               <span className="min-w-0">
                 <span className="flex items-center gap-2">
                   <span className="truncate font-display font-semibold">{p.name}</span>
                   {p.status === 'hidden' && <Badge tone="warn">Hidden by an admin</Badge>}
+                  {p.role !== 'owner' && <Badge tone="info">{p.role === 'manager' ? 'Manager' : 'Reviewer'}</Badge>}
                 </span>
                 {p.tagline && <span className="block truncate text-sm text-mute">{p.tagline}</span>}
               </span>
@@ -433,7 +440,124 @@ function ProjectBounties({ slug }: { slug: string }) {
   )
 }
 
-type ManageTab = 'bounties' | 'recurring' | 'details'
+const ROLE_LABEL = { owner: 'Owner', manager: 'Manager', reviewer: 'Reviewer' } as const
+
+function MembersPanel({ slug, role }: { slug: string; role: 'owner' | 'manager' }) {
+  const members = useProjectMembers(slug, true)
+  const add = useAddMember()
+  const remove = useRemoveMember()
+  const { confirm, dialog } = useConfirm()
+  const [wallet, setWallet] = useState('')
+  const [memberRole, setMemberRole] = useState<'manager' | 'reviewer'>('reviewer')
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async () => {
+    setError(null)
+    if (!/^0x[0-9a-fA-F]{40}$/.test(wallet.trim())) return setError('Enter the full wallet address of the person to add.')
+    try {
+      await add.mutateAsync({ slug, wallet: wallet.trim(), role: memberRole })
+      setWallet('')
+      toast.success('Member added. They were notified.')
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
+  const drop = async (m: ProjectMember) => {
+    const ok = await confirm({ title: `Remove ${m.name ?? 'this member'}?`, description: 'They lose access to the project and its reviews immediately.', confirmLabel: 'Remove', danger: true })
+    if (!ok) return
+    try {
+      await remove.mutateAsync({ slug, userId: m.userId })
+      toast.success('Member removed.')
+    } catch (err) {
+      toast.error(errorMessage(err))
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <Callout title="What members can do">
+        Managers edit the project and its programs and review submissions. Reviewers only review submissions to the project's bounties. Winners are still picked on-chain by the wallet that created each bounty, so a member cannot move USDC.
+      </Callout>
+
+      <form
+        className="grid items-end gap-3 sm:grid-cols-[1fr_9rem_auto]"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void submit()
+        }}
+        noValidate
+      >
+        <Field label="Wallet address" hint="The person must have signed in and linked this wallet.">
+          <Input value={wallet} onChange={(e) => setWallet(e.target.value)} placeholder="0x…" />
+        </Field>
+        <Field label="Role">
+          <Select value={memberRole} onChange={(e) => setMemberRole(e.target.value as 'manager' | 'reviewer')}>
+            <option value="reviewer">Reviewer</option>
+            {role === 'owner' && <option value="manager">Manager</option>}
+          </Select>
+        </Field>
+        <Button type="submit" variant="primary" loading={add.isPending} className="mb-[1.35rem]">
+          Add member
+        </Button>
+      </form>
+      {error && (
+        <p role="alert" className="text-sm font-medium text-danger">
+          {error}
+        </p>
+      )}
+
+      {members.isPending ? (
+        <Skeleton className="h-24 w-full" />
+      ) : members.isError ? (
+        <ErrorState title="Members did not load" onRetry={() => void members.refetch()} />
+      ) : (
+        <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface">
+          {members.data.items.map((m) => (
+            <li key={m.userId} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <span className="flex min-w-0 items-center gap-3">
+                <Avatar name={m.name ?? m.wallet} src={m.photo} size={30} />
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">{m.name ?? 'No name'}</span>
+                  <AddressChip address={m.wallet} />
+                </span>
+              </span>
+              <span className="flex items-center gap-2">
+                <Badge tone={m.role === 'owner' ? 'ink' : m.role === 'manager' ? 'info' : 'neutral'}>{ROLE_LABEL[m.role]}</Badge>
+                {m.role !== 'owner' && !(role === 'manager' && m.role === 'manager') && (
+                  <Button size="sm" variant="ghost" onClick={() => void drop(m)}>
+                    Remove
+                  </Button>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {dialog}
+    </div>
+  )
+}
+
+/** A README badge that always shows the project's live numbers, read from the contract's records. */
+function BadgeSnippet({ slug }: { slug: string }) {
+  const image = `https://bountyfi.xyz/api/badge/${slug}.svg`
+  const markdown = `[![BountyFi](${image})](https://bountyfi.xyz/projects/${slug})`
+  return (
+    <Section title="README badge" description="Show open bounties and paid-out USDC on your GitHub README.">
+      <div className="space-y-3">
+        <img src={`/api/badge/${slug}.svg`} alt="BountyFi badge preview" height={20} className="h-5" />
+        <div className="flex items-start gap-2 rounded-lg border border-line bg-paper p-3">
+          <code className="min-w-0 flex-1 break-all text-xs">{markdown}</code>
+          <CopyButton value={markdown} label="Copy badge markdown" />
+        </div>
+        <p className="text-xs text-mute">The badge refreshes about every five minutes. Hidden projects show "not found".</p>
+      </div>
+    </Section>
+  )
+}
+
+type ManageTab = 'bounties' | 'recurring' | 'members' | 'details'
 
 export function ManageProject() {
   const { slug } = useParams()
@@ -447,8 +571,8 @@ export function ManageProject() {
         <Skeleton className="h-40 w-full" />
       ) : query.isError ? (
         <ErrorState title="The project did not load" onRetry={() => void query.refetch()} />
-      ) : !query.data.isOwner ? (
-        <EmptyState title="You do not own this project" action={<ButtonLink to={`/projects/${query.data.project.slug}`}>View public page</ButtonLink>} />
+      ) : query.data.role !== 'owner' && query.data.role !== 'manager' ? (
+        <EmptyState title="You cannot manage this project" action={<ButtonLink to={`/projects/${query.data.project.slug}`}>View public page</ButtonLink>} />
       ) : (
         <div className="space-y-6">
           <PageHeader
@@ -473,6 +597,7 @@ export function ManageProject() {
             items={[
               { value: 'bounties', label: 'Bounties' },
               { value: 'recurring', label: 'Recurring programs' },
+              { value: 'members', label: 'Members' },
               { value: 'details', label: 'Details' },
             ]}
           />
@@ -483,7 +608,9 @@ export function ManageProject() {
               </Section>
             )}
             {tab === 'recurring' && <Programs slug={query.data.project.slug} />}
+            {tab === 'members' && <MembersPanel slug={query.data.project.slug} role={query.data.role} />}
             {tab === 'details' && (
+              <div className="space-y-10">
               <ProjectForm
                 lockSlug
                 submitLabel="Save changes"
@@ -498,6 +625,8 @@ export function ManageProject() {
                 }}
                 onSaved={() => navigate(`/workspace/projects/${query.data.project.slug}`)}
               />
+              <BadgeSnippet slug={query.data.project.slug} />
+              </div>
             )}
           </div>
         </div>

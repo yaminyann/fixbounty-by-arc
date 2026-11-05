@@ -44,6 +44,7 @@ export interface BountySummary {
   difficulty: Difficulty | null
   skills: string[]
   workMode: WorkMode
+  confidential: boolean
   projectSlug: string | null
   projectName: string | null
   milestoneCount: number
@@ -59,6 +60,9 @@ export interface BountyDetail extends BountySummary {
   eligibility: string | null
   recurringProgramId: string | null
   projectLogo: string | null
+  /** The creator's public key, present only on confidential bounties. */
+  creatorEncryptionKey: JsonWebKey | null
+  viewerCanReview: boolean
   description: string | null
   acceptanceCriteria: string | null
   links: string[]
@@ -104,6 +108,12 @@ export interface Submission {
   /** Only the creator, the contributor and admins receive these two. */
   reviewStatus: ReviewStatus | null
   commentCount: number | null
+  prState: 'open' | 'closed' | 'merged' | 'not_found' | null
+  prMerged: boolean | null
+  prAuthor: string | null
+  prTitle: string | null
+  prCheckedAt: string | null
+  prAuthorMatchesProfile: boolean
 }
 
 export interface ActivityItem {

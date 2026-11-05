@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Layers, Users } from 'lucide-react'
+import { Layers, Lock, Users } from 'lucide-react'
 import type { BountySummary } from '@/lib/api/types'
 import { Status } from '@/lib/api/types'
 import { useCategories } from '@/lib/api/ecosystem'
@@ -32,6 +32,11 @@ export function BountyRow({ bounty }: { bounty: BountySummary }) {
             {bounty.workMode === 'team' && (
               <Badge tone="info">
                 <Users size={12} aria-hidden /> Team
+              </Badge>
+            )}
+            {bounty.confidential && (
+              <Badge>
+                <Lock size={12} aria-hidden /> Encrypted reports
               </Badge>
             )}
             {bounty.milestoneCount > 0 && (

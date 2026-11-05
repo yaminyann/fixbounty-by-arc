@@ -6,6 +6,7 @@ import { BOUNTY_BOARD_ABI } from '../abi.js'
 import { publicClient, readBounty, readBountyCount, type OnchainBounty } from '../chain.js'
 import { applyWinnerPositions, upsertChainBounty } from './bountySync.js'
 import { notify } from './notify.js'
+import { reviewerUserIds } from '../lib/ecosystem.js'
 
 /**
  * Chain indexer. The contract is the source of truth; this keeps PostgreSQL in step with it
@@ -191,17 +192,19 @@ async function processLogs(logs: DecodedLog[]): Promise<void> {
                updated_at = NOW()`,
             [bountyRowId, actor, log.args.submissionHash as string, log.transactionHash],
           )
-          await notify(
-            {
-              userId: (await db.query<{ creator_user_id: string | null }>('SELECT creator_user_id FROM bounties WHERE id = $1', [bountyRowId])).rows[0]?.creator_user_id,
-              kind: 'new_submission',
-              title: 'New submission on your bounty',
-              body: state.title,
-              link: `/bounty/${onchainId}?tab=submissions`,
-              dedupeKey: `submitted:${log.transactionHash}:${log.logIndex}`,
-            },
-            db,
-          )
+          for (const reviewer of await reviewerUserIds(bountyRowId, db)) {
+            await notify(
+              {
+                userId: reviewer,
+                kind: 'new_submission',
+                title: 'New submission to review',
+                body: state.title,
+                link: `/bounty/${onchainId}?tab=submissions`,
+                dedupeKey: `submitted:${log.transactionHash}:${log.logIndex}`,
+              },
+              db,
+            )
+          }
           break
         }
         case 'WinnerApproved':

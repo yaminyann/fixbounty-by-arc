@@ -239,7 +239,8 @@ export default function ProjectPage() {
     return <ErrorState title="The project did not load" onRetry={() => void query.refetch()} />
   }
 
-  const { project, isOwner } = query.data
+  const { project, role } = query.data
+  const canManage = role === 'owner' || role === 'manager'
 
   return (
     <article className="space-y-6">
@@ -275,7 +276,7 @@ export default function ProjectPage() {
             </div>
           </div>
         </div>
-        {isOwner && (
+        {canManage && (
           <ButtonLink to={`/workspace/projects/${project.slug}`} icon={<Settings2 size={15} aria-hidden />}>
             Manage project
           </ButtonLink>

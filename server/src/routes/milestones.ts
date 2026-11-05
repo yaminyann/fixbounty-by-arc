@@ -4,7 +4,7 @@ import { query, withTransaction } from '../db.js'
 import { getLinkedWallet, isAdminUser, optionalAuth, requireAuth, requireLinkedWallet } from '../auth.js'
 import { HttpError, isUuid, parse, parseOnchainId, route } from '../lib/http.js'
 import { rateLimit } from '../lib/limits.js'
-import { canSeeBounty, httpUrl, isBountyCreator, loadBountyAccess } from '../lib/ecosystem.js'
+import { canSeeBounty, httpUrl, isBountyCreator, loadBountyAccess, projectRole, reviewerUserIds } from '../lib/ecosystem.js'
 import { notify } from '../services/notify.js'
 
 /**
@@ -60,7 +60,8 @@ milestonesRouter.get(
     if (!(await canSeeBounty(req, bounty))) throw new HttpError(404, 'Bounty not found')
 
     const viewerWallet = req.user ? await getLinkedWallet(req.user.id) : null
-    const reviewer = isAdminUser(req.user) || (req.user !== undefined && bounty.creator_user_id === req.user.id) || (viewerWallet !== null && viewerWallet === bounty.creator_wallet)
+    const onProject = req.user && bounty.project_id ? (await projectRole(req.user.id, bounty.project_id)) !== null : false
+    const reviewer = isAdminUser(req.user) || (req.user !== undefined && bounty.creator_user_id === req.user.id) || (viewerWallet !== null && viewerWallet === bounty.creator_wallet) || onProject
 
     const milestones = await query<MilestoneRow>(
       `SELECT ${MILESTONE_COLUMNS} FROM bounty_milestones m WHERE m.bounty_id = $1 ORDER BY m.position`,
@@ -221,13 +222,15 @@ milestonesRouter.post(
       if ((err as { code?: string }).code === '23505') throw new HttpError(409, 'You already submitted work for this milestone. Add an update in its review thread instead.')
       throw err
     }
-    await notify({
-      userId: bounty.creator_user_id,
-      kind: 'milestone_submission',
-      title: 'New milestone submission',
-      body: `${bounty.title}: ${milestone.rows[0].title}`,
-      link: `/bounty/${bounty.onchain_id}?tab=milestones`,
-    })
+    for (const reviewer of await reviewerUserIds(bounty.id)) {
+      await notify({
+        userId: reviewer,
+        kind: 'milestone_submission',
+        title: 'New milestone submission',
+        body: `${bounty.title}: ${milestone.rows[0].title}`,
+        link: `/bounty/${bounty.onchain_id}?tab=milestones`,
+      })
+    }
     res.status(201).json({ ok: true })
   }),
 )

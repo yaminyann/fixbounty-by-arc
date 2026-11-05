@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
+import { Lock } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Callout } from '@/components/ui/Feedback'
 import { Field, Input, Textarea } from '@/components/ui/Form'
 import { useTx } from '@/hooks/useBountyContract'
 import { useAttachNotes, useRefreshBounty } from '@/lib/api/queries'
 import { errorMessage } from '@/lib/api/client'
+import { MAX_REPORT_BYTES, encryptReport } from '@/lib/crypto'
 import { clearDraft, loadDraft, notesDraftKey, saveDraft } from '@/lib/drafts'
 import { SubmissionMetadataSchema, splitLines, submissionCommitment } from '@/lib/metadata'
 
@@ -14,13 +16,24 @@ interface Draft {
   pullRequestUrl: string
   extra: string
   txHash?: string
+  /** For confidential bounties: the encrypted report. The plaintext is never saved, and a retry must reuse these exact bytes. */
+  cipher?: string
+}
+
+interface Props {
+  onchainId: number
+  wallet: string
+  alreadySubmittedOnChain: boolean
+  /** Confidential bounties take reports encrypted in the browser to this public key. */
+  confidentialKey?: JsonWebKey | null
+  confidential?: boolean
 }
 
 /**
  * Two steps: record the hash of your notes on-chain, then attach the notes themselves. If the second
  * step fails the form stays available in "attach only" mode, because the on-chain part cannot be repeated.
  */
-export function SubmitWork({ onchainId, wallet, alreadySubmittedOnChain }: { onchainId: number; wallet: string; alreadySubmittedOnChain: boolean }) {
+export function SubmitWork({ onchainId, wallet, alreadySubmittedOnChain, confidential = false, confidentialKey = null }: Props) {
   const key = notesDraftKey(wallet, onchainId)
   const saved = loadDraft<Draft>(key)
   const [form, setForm] = useState<Draft>(saved ?? { description: '', pullRequestUrl: '', extra: '' })
@@ -32,10 +45,11 @@ export function SubmitWork({ onchainId, wallet, alreadySubmittedOnChain }: { onc
   const refresh = useRefreshBounty()
 
   const set = (patch: Partial<Draft>) => setForm((f) => ({ ...f, ...patch }))
+  const hasCipher = confidential && Boolean(form.cipher)
 
-  const parse = () => {
+  const parse = (description: string) => {
     const result = SubmissionMetadataSchema.safeParse({
-      description: form.description,
+      description,
       pullRequestUrl: form.pullRequestUrl,
       attachments: splitLines(form.extra),
     })
@@ -65,15 +79,33 @@ export function SubmitWork({ onchainId, wallet, alreadySubmittedOnChain }: { onc
   }
 
   const submit = async () => {
-    const meta = parse()
+    let description = form.description
+    let cipher = form.cipher
+
+    if (confidential) {
+      if (!cipher) {
+        if (!confidentialKey) return setAttachError('The creator has not published an encryption key, so reports cannot be sent yet.')
+        if (form.description.trim().length < 10) return setErrors({ description: 'Describe the finding in at least a sentence.' })
+        try {
+          cipher = await encryptReport(form.description.trim(), confidentialKey)
+        } catch (err) {
+          return setErrors({ description: errorMessage(err) })
+        }
+      }
+      description = cipher
+    }
+
+    const meta = parse(description)
     if (!meta) return
-    saveDraft(key, form)
+    // A confidential report is saved only as ciphertext. Encryption is randomised, so a retry must reuse this exact text.
+    saveDraft(key, confidential ? { ...form, description: '', cipher } : form)
+    if (confidential) set({ cipher, description: '' })
 
     if (!submittedOnChain) {
       try {
         const hash = await submissionCommitment(onchainId, meta)
         const { hash: txHash } = await tx.board('submitWork', [BigInt(onchainId), hash])
-        saveDraft(key, { ...form, txHash })
+        saveDraft(key, { ...form, description: confidential ? '' : form.description, cipher, txHash })
         setSubmittedOnChain(true)
         await sendNotes(meta, txHash)
       } catch {
@@ -95,23 +127,46 @@ export function SubmitWork({ onchainId, wallet, alreadySubmittedOnChain }: { onc
         void submit()
       }}
     >
+      {confidential && (
+        <Callout tone="info" title="This bounty takes encrypted reports">
+          <span className="inline-flex items-center gap-1.5">
+            <Lock size={13} aria-hidden /> Your report is encrypted in this browser to the creator's key before it leaves your device. Only the creator can read it, so keep your own copy.
+          </span>
+        </Callout>
+      )}
       {submittedOnChain ? (
         <Callout tone="warn" title="Your submission is on-chain, but the notes are not attached yet">
-          Re-enter exactly what you wrote before. The text must match the hash recorded on-chain.
+          {hasCipher ? 'Your encrypted report is saved in this browser. Attach it now.' : 'Re-enter exactly what you wrote before. The text must match the hash recorded on-chain.'}
         </Callout>
       ) : (
         <p className="text-sm text-mute">One submission per bounty. Your text is hashed and the hash is written on-chain, so it cannot be edited later.</p>
       )}
 
-      <Field label="What did you deliver?" error={errors.description} hint="Explain the work and how the creator can verify it.">
-        <Textarea rows={5} value={form.description} onChange={(e) => set({ description: e.target.value })} maxLength={5000} />
-      </Field>
-      <Field label="Main link" error={errors.pullRequestUrl} hint="A GitHub pull request or repository, a design file, a document or a report.">
+      {!hasCipher && (
+        <Field
+          label={confidential ? 'Your report (encrypted before sending)' : 'What did you deliver?'}
+          error={errors.description}
+          hint={confidential ? `Up to ${MAX_REPORT_BYTES} characters. Include steps to reproduce and impact.` : 'Explain the work and how the creator can verify it.'}
+        >
+          <Textarea rows={5} value={form.description} onChange={(e) => set({ description: e.target.value })} maxLength={confidential ? MAX_REPORT_BYTES : 5000} />
+        </Field>
+      )}
+      <Field
+        label="Main link"
+        error={errors.pullRequestUrl}
+        hint={
+          confidential
+            ? 'Public and not encrypted. Do not put details of the weakness here. Link the project or the bounty page.'
+            : 'A GitHub pull request or repository, a design file, a document or a report.'
+        }
+      >
         <Input type="url" inputMode="url" placeholder="https://github.com/org/repo/pull/123" value={form.pullRequestUrl} onChange={(e) => set({ pullRequestUrl: e.target.value })} />
       </Field>
-      <Field label="More links" optional error={errors.extra} hint="One link per line: documents, demos, videos or screenshots. Image links show as previews.">
-        <Textarea rows={3} value={form.extra} onChange={(e) => set({ extra: e.target.value })} />
-      </Field>
+      {!confidential && (
+        <Field label="More links" optional error={errors.extra} hint="One link per line: documents, demos, videos or screenshots. Image links show as previews.">
+          <Textarea rows={3} value={form.extra} onChange={(e) => set({ extra: e.target.value })} />
+        </Field>
+      )}
 
       {(tx.error || attachError) && (
         <p role="alert" className="text-sm font-medium text-danger">
@@ -120,7 +175,7 @@ export function SubmitWork({ onchainId, wallet, alreadySubmittedOnChain }: { onc
       )}
 
       <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>
-        {submittedOnChain ? 'Attach notes' : 'Submit work'}
+        {submittedOnChain ? 'Attach notes' : confidential ? 'Encrypt and submit' : 'Submit work'}
       </Button>
     </form>
   )

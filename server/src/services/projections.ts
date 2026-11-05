@@ -21,6 +21,7 @@ export const BOUNTY_LIST_COLUMNS = `
   b.difficulty,
   b.skills,
   b.work_mode AS "workMode",
+  b.confidential,
   (SELECT p.slug FROM projects p WHERE p.id = b.project_id) AS "projectSlug",
   (SELECT p.name FROM projects p WHERE p.id = b.project_id) AS "projectName",
   (SELECT COUNT(*)::int FROM bounty_milestones m WHERE m.bounty_id = b.id) AS "milestoneCount",
@@ -46,6 +47,7 @@ export const BOUNTY_DETAIL_COLUMNS = `
   b.submission_instructions AS "submissionInstructions",
   b.eligibility,
   b.recurring_program_id AS "recurringProgramId",
+  (SELECT k.public_jwk FROM encryption_keys k WHERE k.user_id = b.creator_user_id AND b.confidential) AS "creatorEncryptionKey",
   (SELECT p.logo_url FROM projects p WHERE p.id = b.project_id) AS "projectLogo",
   b.creator_user_id AS "creatorUserId",
   cu.display_name AS "creatorName",
@@ -66,6 +68,16 @@ export const SUBMISSION_COLUMNS = `
   s.tx_hash AS "txHash",
   s.created_at AS "createdAt",
   s.review_status AS "reviewStatus",
+  s.pr_state AS "prState",
+  s.pr_merged AS "prMerged",
+  s.pr_author AS "prAuthor",
+  s.pr_title AS "prTitle",
+  s.pr_checked_at AS "prCheckedAt",
+  (s.pr_author IS NOT NULL AND EXISTS (
+     SELECT 1 FROM contributor_profiles cp
+      WHERE cp.user_id = COALESCE(s.submitter_user_id, (SELECT user_id FROM wallets WHERE address = s.submitter_wallet))
+        AND LOWER(cp.github_url) ~ ('^https?://(www\\.)?github\\.com/' || LOWER(s.pr_author) || '/?$')
+  )) AS "prAuthorMatchesProfile",
   (SELECT COUNT(*)::int FROM review_comments rc WHERE rc.target_type = 'submission' AND rc.target_id = s.id) AS "commentCount",
   su.display_name AS "submitterName",
   su.photo_url AS "submitterPhoto",

@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Plus, Search, SlidersHorizontal, X } from 'lucide-react'
 import { BountyRow, BountyRowSkeleton } from '@/components/bounty/BountyRow'
+import { SaveSearchButton } from '@/components/ecosystem/SaveSearch'
 import { Button, ButtonLink } from '@/components/ui/Button'
 import { EmptyState, ErrorState, PageHeader } from '@/components/ui/Feedback'
 import { Input, Select } from '@/components/ui/Form'
@@ -246,6 +247,18 @@ export default function Explore() {
                 ))}
               </Select>
             </div>
+            <SaveSearchButton
+              filters={{
+                q: urlSearch || undefined,
+                category: category || undefined,
+                difficulty: difficulty || undefined,
+                mode,
+                skill: skill || undefined,
+                project: project || undefined,
+                min: minReward ? Number(minReward) : undefined,
+                max: maxReward ? Number(maxReward) : undefined,
+              }}
+            />
             <Button className="lg:hidden" icon={<SlidersHorizontal size={15} aria-hidden />} onClick={() => setFiltersOpen((v) => !v)} aria-expanded={filtersOpen}>
               Filters{activeFilters.length > 0 ? ` (${activeFilters.length})` : ''}
             </Button>
