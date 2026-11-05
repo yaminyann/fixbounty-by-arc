@@ -3,24 +3,26 @@ import { Link, type LinkProps } from 'react-router-dom'
 import { cn } from '@/lib/cn'
 import { Spinner } from '@/components/ui/Feedback'
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'dark'
+type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'dark' | 'accent'
 type Size = 'sm' | 'md' | 'lg'
 
 const BASE =
-  'inline-flex select-none items-center justify-center gap-2 whitespace-nowrap rounded border-2 border-ink font-bold transition-[background-color,box-shadow,transform] duration-100 disabled:cursor-not-allowed disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50'
+  'inline-flex select-none items-center justify-center gap-2 whitespace-nowrap rounded-md border font-medium transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50'
 
 const VARIANTS: Record<Variant, string> = {
-  primary: 'bg-signal text-ink shadow-hard hover:bg-signal-deep active:translate-x-[2px] active:translate-y-[2px] active:shadow-none disabled:shadow-none',
-  secondary: 'bg-white text-ink hover:bg-signal-soft',
-  dark: 'on-ink bg-ink text-white hover:bg-neutral-800',
-  ghost: 'border-transparent bg-transparent text-ink hover:border-line hover:bg-white',
-  danger: 'border-danger bg-white text-danger hover:bg-danger-soft',
+  primary: 'on-ink border-ink bg-ink text-white hover:bg-neutral-800',
+  dark: 'on-ink border-ink bg-ink text-white hover:bg-neutral-800',
+  // The brand yellow is kept for the single most important action on a screen.
+  accent: 'border-signal-deep/60 bg-signal text-ink hover:bg-signal-deep',
+  secondary: 'border-line bg-surface text-ink hover:border-ink/30 hover:bg-paper',
+  ghost: 'border-transparent bg-transparent text-ink hover:bg-ink/5',
+  danger: 'border-danger/40 bg-surface text-danger hover:bg-danger-soft',
 }
 
 const SIZES: Record<Size, string> = {
   sm: 'h-8 px-3 text-sm',
-  md: 'h-10 px-4 text-sm',
-  lg: 'h-12 px-6 text-base',
+  md: 'h-9 px-4 text-sm',
+  lg: 'h-11 px-5 text-sm',
 }
 
 export function buttonClasses(variant: Variant = 'secondary', size: Size = 'md', extra?: string): string {
@@ -82,7 +84,7 @@ export function ExternalLink({ href, children, className }: ExternalLinkProps) {
       href={safe}
       target="_blank"
       rel="noopener noreferrer nofollow"
-      className={cn('break-all font-medium underline decoration-ink/40 underline-offset-2 hover:decoration-ink', className)}
+      className={cn('break-all font-medium underline decoration-ink/30 underline-offset-2 hover:decoration-ink', className)}
     >
       {children}
     </a>

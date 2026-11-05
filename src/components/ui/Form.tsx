@@ -2,10 +2,10 @@ import { cloneElement, forwardRef, useId, type InputHTMLAttributes, type ReactEl
 import { cn } from '@/lib/cn'
 
 const CONTROL =
-  'w-full rounded border-2 border-ink bg-white px-3 text-sm text-ink placeholder:text-mute/70 transition-colors hover:bg-signal-soft/40 focus:bg-white disabled:cursor-not-allowed disabled:bg-line/40 disabled:text-mute aria-[invalid=true]:border-danger'
+  'w-full rounded-md border border-line bg-surface px-3 text-sm text-ink placeholder:text-mute/70 transition-colors hover:border-ink/30 focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10 disabled:cursor-not-allowed disabled:bg-paper disabled:text-mute aria-[invalid=true]:border-danger'
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input({ className, ...props }, ref) {
-  return <input ref={ref} className={cn(CONTROL, 'h-10', className)} {...props} />
+  return <input ref={ref} className={cn(CONTROL, 'h-9', className)} {...props} />
 })
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(function Textarea(
@@ -17,7 +17,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
 
 export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(function Select({ className, children, ...props }, ref) {
   return (
-    <select ref={ref} className={cn(CONTROL, 'h-10 cursor-pointer pr-8', className)} {...props}>
+    <select ref={ref} className={cn(CONTROL, 'h-9 cursor-pointer pr-8', className)} {...props}>
       {children}
     </select>
   )
@@ -41,7 +41,7 @@ export function Field({ label, hint, error, optional, className, children }: Fie
 
   return (
     <div className={cn('space-y-1.5', className)}>
-      <label htmlFor={id} className="flex items-baseline justify-between gap-2 text-sm font-bold">
+      <label htmlFor={id} className="flex items-baseline justify-between gap-2 text-sm font-medium">
         <span>{label}</span>
         {optional && <span className="text-xs font-normal text-mute">Optional</span>}
       </label>

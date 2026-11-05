@@ -58,18 +58,18 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="flex min-h-dvh flex-col">
       <a
         href="#main"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded focus:border-2 focus:border-ink focus:bg-signal focus:px-3 focus:py-2 focus:text-sm focus:font-bold"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded focus:border-2 focus:border-ink focus:bg-signal focus:px-3 focus:py-2 focus:text-sm focus:font-semibold"
       >
         Skip to content
       </a>
-      <div className="bg-ink px-4 py-1.5 text-center text-xs font-medium text-white">
+      <div className="bg-ink px-4 py-1 text-center text-xs text-white/85">
         {appChain.testnet ? 'Arc Testnet. All USDC here is test money with no real value.' : `Connected to ${appChain.name}`}
       </div>
       <Header />
       <NetworkBanner />
       <ContractNotice />
       <AuthNotice />
-      <main id="main" className="mx-auto w-full max-w-6xl flex-1 px-4 py-10">
+      <main id="main" className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:py-10">
         <Suspense
           fallback={
             <div className="grid place-items-center py-24">

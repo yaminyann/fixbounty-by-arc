@@ -53,12 +53,12 @@ export default function Activity() {
       ) : items.length === 0 ? (
         <EmptyState title="No activity yet">Events show up here as people create, fund, submit to and settle bounties.</EmptyState>
       ) : (
-        <ol className="divide-y divide-line overflow-hidden rounded-md border-2 border-ink bg-white">
+        <ol className="divide-y divide-line overflow-hidden rounded-md border border-line bg-white">
           {items.map((a) => (
             <li key={a.id} className="grid gap-1 px-4 py-3 sm:grid-cols-[1fr_auto] sm:items-center">
               <div className="min-w-0">
                 <p className="text-sm">{describeActivity(a)}</p>
-                <Link to={`/bounty/${a.onchainId}`} className="block truncate text-sm font-bold underline decoration-ink/30 underline-offset-2 hover:decoration-ink">
+                <Link to={`/bounty/${a.onchainId}`} className="block truncate text-sm font-semibold underline decoration-ink/30 underline-offset-2 hover:decoration-ink">
                   {a.bountyTitle}
                 </Link>
               </div>

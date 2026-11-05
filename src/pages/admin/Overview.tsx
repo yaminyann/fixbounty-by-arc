@@ -19,7 +19,7 @@ const STATUS_NAMES: Record<number, string> = {
 function Tile({ label, value, unit, to }: { label: string; value: string; unit?: string; to?: string }) {
   const body = (
     <>
-      <p className="num font-display text-2xl font-bold">
+      <p className="num font-display text-2xl font-semibold">
         {value}
         {unit && <span className="ml-1 text-sm font-medium text-mute">{unit}</span>}
       </p>
@@ -27,7 +27,7 @@ function Tile({ label, value, unit, to }: { label: string; value: string; unit?:
     </>
   )
   return to ? (
-    <Link to={to} className="block bg-white px-5 py-4 hover:bg-signal-soft">
+    <Link to={to} className="block bg-white px-5 py-4 hover:bg-ink/5">
       {body}
     </Link>
   ) : (
@@ -41,7 +41,7 @@ function Bars({ title, points, format }: { title: string; points: { label: strin
   return (
     <figure className="rounded-md border border-line bg-white p-5">
       <figcaption className="mb-4 flex items-baseline justify-between gap-3">
-        <span className="font-display font-bold">{title}</span>
+        <span className="font-display font-semibold">{title}</span>
         <span className="num text-sm text-mute">{format(total)} in 14 days</span>
       </figcaption>
       <div className="flex h-28 items-end gap-1" role="img" aria-label={`${title}, last 14 days: ${points.map((p) => `${p.label} ${format(p.value)}`).join(', ')}`}>
@@ -103,8 +103,8 @@ export default function Overview() {
       </div>
 
       <section aria-labelledby="rev" className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-        <div className="space-y-4 rounded-md border-2 border-ink bg-white p-5">
-          <h2 id="rev" className="font-display text-xl font-bold">
+        <div className="space-y-4 rounded-md border border-line bg-white p-5">
+          <h2 id="rev" className="font-display text-xl font-semibold">
             Platform revenue
           </h2>
           <FeeLedger
@@ -120,7 +120,7 @@ export default function Overview() {
           <div className="space-y-1 border-t border-line pt-3 text-sm">
             <p className="text-mute">Fee wallet</p>
             <AddressChip address={o.revenue.treasuryAddress} />
-            <p className="num pt-1 font-bold">
+            <p className="num pt-1 font-semibold">
               {o.revenue.treasuryBalance !== null ? `${formatUsdc(o.revenue.treasuryBalance, 4)} USDC held` : 'Balance unavailable'}
             </p>
           </div>
@@ -140,7 +140,7 @@ export default function Overview() {
       </section>
 
       <section aria-labelledby="states">
-        <h2 id="states" className="mb-3 font-display text-xl font-bold">
+        <h2 id="states" className="mb-3 font-display text-xl font-semibold">
           Bounties by on-chain state
         </h2>
         <div className="overflow-x-auto rounded-md border border-line bg-white">
@@ -148,9 +148,9 @@ export default function Overview() {
             <caption className="sr-only">Bounties grouped by on-chain state</caption>
             <thead>
               <tr className="border-b border-line bg-paper">
-                <th scope="col" className="px-4 py-2 font-bold">State</th>
-                <th scope="col" className="px-4 py-2 text-right font-bold">Bounties</th>
-                <th scope="col" className="px-4 py-2 text-right font-bold">Total prize pools</th>
+                <th scope="col" className="px-4 py-2 font-semibold">State</th>
+                <th scope="col" className="px-4 py-2 text-right font-semibold">Bounties</th>
+                <th scope="col" className="px-4 py-2 text-right font-semibold">Total prize pools</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line">

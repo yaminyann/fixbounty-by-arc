@@ -17,7 +17,7 @@ export function CopyButton({ value, label = 'Copy', className }: { value: string
           window.setTimeout(() => setCopied(false), 1500)
         })
       }}
-      className={cn('grid size-6 place-items-center rounded text-mute hover:bg-signal-soft hover:text-ink', className)}
+      className={cn('grid size-6 place-items-center rounded text-mute hover:bg-ink/5 hover:text-ink', className)}
     >
       {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
     </button>
@@ -28,17 +28,17 @@ export function CopyButton({ value, label = 'Copy', className }: { value: string
 export function AddressChip({ address, self, className }: { address: string; self?: boolean; className?: string }) {
   return (
     <span className={cn('inline-flex items-center gap-0.5', className)}>
-      <span className="num rounded bg-line/60 px-1.5 py-0.5 text-xs" title={address}>
+      <span className="num rounded bg-ink/5 px-1.5 py-0.5 text-xs" title={address}>
         {shortAddress(address)}
       </span>
-      {self && <span className="ml-1 rounded bg-signal px-1.5 text-xs font-bold">You</span>}
+      {self && <span className="ml-1 rounded bg-signal px-1.5 text-xs font-semibold">You</span>}
       <CopyButton value={address} label="Copy address" />
       <a
         href={explorerAddress(address)}
         target="_blank"
         rel="noopener noreferrer"
         aria-label="View address on the explorer"
-        className="grid size-6 place-items-center rounded text-mute hover:bg-signal-soft hover:text-ink"
+        className="grid size-6 place-items-center rounded text-mute hover:bg-ink/5 hover:text-ink"
       >
         <ExternalIcon size={14} aria-hidden />
       </a>
@@ -63,11 +63,11 @@ export function TxLink({ hash, className }: { hash: string; className?: string }
 export function Avatar({ name, src, size = 28 }: { name?: string | null; src?: string | null; size?: number }) {
   const initial = (name?.trim()?.[0] ?? '?').toUpperCase()
   return src ? (
-    <img src={src} alt="" width={size} height={size} referrerPolicy="no-referrer" className="shrink-0 rounded-full border border-ink object-cover" style={{ width: size, height: size }} />
+    <img src={src} alt="" width={size} height={size} referrerPolicy="no-referrer" className="shrink-0 rounded-full border border-line object-cover" style={{ width: size, height: size }} />
   ) : (
     <span
       aria-hidden
-      className="grid shrink-0 place-items-center rounded-full border border-ink bg-signal text-xs font-bold"
+      className="grid shrink-0 place-items-center rounded-full border border-signal-deep/40 bg-signal text-xs font-semibold"
       style={{ width: size, height: size }}
     >
       {initial}

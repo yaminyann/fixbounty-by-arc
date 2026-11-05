@@ -30,7 +30,7 @@ function Step({ done, label }: { done: boolean; label: string }) {
     <li className="flex items-center gap-3">
       <span
         aria-hidden
-        className={`grid size-5 place-items-center rounded-full border-2 border-ink ${done ? 'bg-signal' : 'bg-white'}`}
+        className={`grid size-5 place-items-center rounded-full border border-line ${done ? 'bg-signal' : 'bg-white'}`}
       >
         {done && <Check size={12} strokeWidth={3} />}
       </span>

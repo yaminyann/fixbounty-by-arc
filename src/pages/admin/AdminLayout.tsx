@@ -11,6 +11,8 @@ const TABS = [
   { to: '/admin/bounties', label: 'All bounties' },
   { to: '/admin/submissions', label: 'Submissions' },
   { to: '/admin/users', label: 'Users' },
+  { to: '/admin/projects', label: 'Projects' },
+  { to: '/admin/categories', label: 'Categories' },
   { to: '/admin/revenue', label: 'Revenue' },
   { to: '/admin/activity', label: 'Chain activity' },
   { to: '/admin/audit', label: 'Audit log' },

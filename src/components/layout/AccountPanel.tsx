@@ -13,12 +13,12 @@ function Row({ done, title, detail, action }: { done: boolean; title: string; de
     <li className="flex items-start gap-3 py-3">
       <span
         aria-hidden
-        className={cn('mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border-2 border-ink', done ? 'bg-signal' : 'bg-white')}
+        className={cn('mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border', done ? 'border-ink bg-ink text-white' : 'border-line bg-surface')}
       >
         {done && <Check size={12} strokeWidth={3} />}
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-bold">{title}</p>
+        <p className="text-sm font-medium">{title}</p>
         <p className="num truncate text-xs text-mute">{detail}</p>
         {action && <div className="mt-2">{action}</div>}
       </div>
@@ -26,7 +26,7 @@ function Row({ done, title, detail, action }: { done: boolean; title: string; de
   )
 }
 
-/** The account checklist: Google, wallet, and the signature that binds them. Used in the header menu and the mobile drawer. */
+/** The account checklist: Google, wallet, and the signature that binds them. Used in the header menu and the mobile menu. */
 export function AccountPanel({ onNavigate }: { onNavigate?: () => void }) {
   const { user, signOut, error } = useAuth()
   const id = useIdentity()
@@ -38,7 +38,7 @@ export function AccountPanel({ onNavigate }: { onNavigate?: () => void }) {
         <div className="flex items-center gap-3 border-b border-line pb-3">
           <Avatar name={user.displayName ?? user.email} src={user.photoURL} size={36} />
           <div className="min-w-0">
-            <p className="truncate text-sm font-bold">{user.displayName ?? user.email}</p>
+            <p className="truncate text-sm font-medium">{user.displayName ?? user.email}</p>
             {user.displayName && <p className="truncate text-xs text-mute">{user.email}</p>}
           </div>
         </div>
@@ -100,13 +100,21 @@ export function AccountPanel({ onNavigate }: { onNavigate?: () => void }) {
       )}
 
       {user && (
-        <div className="flex flex-wrap gap-3 border-t border-line pt-3">
-          <Link to="/account" onClick={onNavigate} className="text-sm font-bold underline underline-offset-2">
-            Account
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line pt-3 text-sm">
+          <Link to="/dashboard" onClick={onNavigate} className="font-medium hover:underline">
+            Workspace
+          </Link>
+          {id.linkedWallet && (
+            <Link to={`/u/${id.linkedWallet.toLowerCase()}`} onClick={onNavigate} className="font-medium hover:underline">
+              Profile
+            </Link>
+          )}
+          <Link to="/settings" onClick={onNavigate} className="font-medium hover:underline">
+            Settings
           </Link>
           {id.isAdmin && (
-            <Link to="/admin" onClick={onNavigate} className="text-sm font-bold underline underline-offset-2">
-              Admin console
+            <Link to="/admin" onClick={onNavigate} className="font-medium hover:underline">
+              Admin
             </Link>
           )}
           <button
@@ -115,7 +123,7 @@ export function AccountPanel({ onNavigate }: { onNavigate?: () => void }) {
               onNavigate?.()
               void signOut()
             }}
-            className="ml-auto text-sm font-bold text-danger underline underline-offset-2"
+            className="ml-auto font-medium text-danger hover:underline"
           >
             Sign out
           </button>

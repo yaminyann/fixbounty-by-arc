@@ -21,6 +21,7 @@ import type {
   PublicStats,
   Submission,
 } from './types'
+import type { ListingInput } from './ecosystem'
 import { useAuth } from '@/contexts/AuthContext'
 
 type ListPage<T> = Page<T>
@@ -32,6 +33,17 @@ export interface BountyFilters {
   open?: boolean
   sort?: 'newest' | 'reward' | 'deadline' | 'popular'
   creator?: string
+  /** Marketplace state: open for work, in progress (review or claiming), completed, or cancelled/refunded. */
+  state?: 'open' | 'in_progress' | 'completed' | 'cancelled'
+  category?: string
+  difficulty?: string
+  project?: string
+  mode?: 'solo' | 'team'
+  skill?: string
+  /** Whole USDC. */
+  minReward?: number
+  maxReward?: number
+  deadlineWithin?: number
   limit?: number
   offset?: number
 }
@@ -174,6 +186,8 @@ export interface PublishBountyInput {
   tags: string[]
   links: string[]
   txHash?: string
+  /** Listing details. They are stored beside the bounty and are not part of the on-chain hash. */
+  listing?: ListingInput
 }
 
 export function usePublishBounty() {

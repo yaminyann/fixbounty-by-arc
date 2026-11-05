@@ -11,7 +11,7 @@ const LINK = 'text-sm text-white/70 underline-offset-4 hover:text-white hover:un
 function Column({ title, children }: { title: string; children: ReactNode }) {
   return (
     <nav aria-label={title} className="space-y-4">
-      <p className="text-sm font-bold text-white">{title}</p>
+      <p className="text-sm font-semibold text-white">{title}</p>
       <ul className="space-y-2.5">{children}</ul>
     </nav>
   )
@@ -38,32 +38,32 @@ export function Footer() {
         <div className="grid gap-12 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
           <div className="space-y-5">
             <Link to="/" aria-label="BountyFi home" className="inline-block">
-              <img src="/brand/lockup.png" alt="BountyFi" width={760} height={286} className="h-auto w-52" />
+              <img src="/brand/lockup.png" alt="BountyFi" width={760} height={186} className="h-auto w-52" />
             </Link>
             <p className="max-w-xs text-sm text-white/70">
-              An escrow board for open-source bug fixes. Prizes stay in a smart contract until the maintainer picks the winners.
+              Turn any problem into a reward. Prizes stay in a smart contract until the creator picks the winners.
             </p>
-            <p className="text-sm font-bold">
+            <p className="text-sm font-semibold">
               <a href="https://bountyfi.xyz" className="text-signal underline-offset-4 hover:underline">
                 bountyfi.xyz
               </a>
             </p>
           </div>
 
-          <Column title="Product">
+          <Column title="Discover">
             <li>
               <Link className={LINK} to="/explore">
                 Explore bounties
               </Link>
             </li>
             <li>
-              <Link className={LINK} to="/create">
-                Post a bounty
+              <Link className={LINK} to="/categories">
+                Categories
               </Link>
             </li>
             <li>
-              <Link className={LINK} to="/dashboard">
-                Dashboard
+              <Link className={LINK} to="/projects">
+                Projects
               </Link>
             </li>
             <li>
@@ -73,15 +73,20 @@ export function Footer() {
             </li>
           </Column>
 
-          <Column title="Learn">
+          <Column title="Build">
             <li>
-              <Link className={LINK} to="/help">
-                How it works
+              <Link className={LINK} to="/create">
+                Post a bounty
+              </Link>
+            </li>
+            <li>
+              <Link className={LINK} to="/dashboard">
+                Workspace
               </Link>
             </li>
             <li>
               <Link className={LINK} to="/help">
-                Fees and rules
+                How it works
               </Link>
             </li>
             <ExternalItem href="https://faucet.circle.com">Get test USDC</ExternalItem>

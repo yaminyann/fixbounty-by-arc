@@ -103,13 +103,13 @@ export function SubmitWork({ onchainId, wallet, alreadySubmittedOnChain }: { onc
         <p className="text-sm text-mute">One submission per bounty. Your text is hashed and the hash is written on-chain, so it cannot be edited later.</p>
       )}
 
-      <Field label="What did you change?" error={errors.description} hint="Explain the fix and how to verify it.">
+      <Field label="What did you deliver?" error={errors.description} hint="Explain the work and how the creator can verify it.">
         <Textarea rows={5} value={form.description} onChange={(e) => set({ description: e.target.value })} maxLength={5000} />
       </Field>
-      <Field label="Pull request link" error={errors.pullRequestUrl}>
+      <Field label="Main link" error={errors.pullRequestUrl} hint="A GitHub pull request or repository, a design file, a document or a report.">
         <Input type="url" inputMode="url" placeholder="https://github.com/org/repo/pull/123" value={form.pullRequestUrl} onChange={(e) => set({ pullRequestUrl: e.target.value })} />
       </Field>
-      <Field label="More links" optional error={errors.extra} hint="One link per line: a demo, a video, a test run.">
+      <Field label="More links" optional error={errors.extra} hint="One link per line: documents, demos, videos or screenshots. Image links show as previews.">
         <Textarea rows={3} value={form.extra} onChange={(e) => set({ extra: e.target.value })} />
       </Field>
 

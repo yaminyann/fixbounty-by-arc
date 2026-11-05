@@ -5,6 +5,7 @@ import { pool, query, withTransaction } from '../db.js'
 import { BOUNTY_BOARD_ABI } from '../abi.js'
 import { publicClient, readBounty, readBountyCount, type OnchainBounty } from '../chain.js'
 import { applyWinnerPositions, upsertChainBounty } from './bountySync.js'
+import { notify } from './notify.js'
 
 /**
  * Chain indexer. The contract is the source of truth; this keeps PostgreSQL in step with it
@@ -190,12 +191,34 @@ async function processLogs(logs: DecodedLog[]): Promise<void> {
                updated_at = NOW()`,
             [bountyRowId, actor, log.args.submissionHash as string, log.transactionHash],
           )
+          await notify(
+            {
+              userId: (await db.query<{ creator_user_id: string | null }>('SELECT creator_user_id FROM bounties WHERE id = $1', [bountyRowId])).rows[0]?.creator_user_id,
+              kind: 'new_submission',
+              title: 'New submission on your bounty',
+              body: state.title,
+              link: `/bounty/${onchainId}?tab=submissions`,
+              dedupeKey: `submitted:${log.transactionHash}:${log.logIndex}`,
+            },
+            db,
+          )
           break
         }
         case 'WinnerApproved':
           actor = (log.args.contributor as string).toLowerCase()
           position = Number(log.args.position)
           amount = log.args.payout as bigint
+          await notify(
+            {
+              userId: (await db.query<{ user_id: string }>('SELECT user_id FROM wallets WHERE address = $1', [actor])).rows[0]?.user_id,
+              kind: 'won',
+              title: `You won ${position === 1 ? '1st' : position === 2 ? '2nd' : position === 3 ? '3rd' : `${position}th`} place`,
+              body: state.title,
+              link: `/bounty/${onchainId}`,
+              dedupeKey: `winner:${log.transactionHash}:${log.logIndex}`,
+            },
+            db,
+          )
           break
         case 'BountyApproved':
           actor = state.creator

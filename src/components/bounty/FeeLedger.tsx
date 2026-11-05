@@ -14,7 +14,7 @@ export function FeeLedger({ lines, className }: { lines: LedgerLine[]; className
   return (
     <dl className={cn('space-y-2', className)}>
       {lines.map((line, i) => (
-        <div key={i} className={cn('ledger-line text-sm', line.total && 'mt-3 border-t-2 border-ink pt-3 text-base font-bold', line.muted && 'text-mute')}>
+        <div key={i} className={cn('ledger-line text-sm', line.total && 'mt-3 border-t border-line pt-3 text-base font-semibold', line.muted && 'text-mute')}>
           <dt>{line.label}</dt>
           <span className="leader" aria-hidden />
           <dd className="num text-right">{line.value}</dd>

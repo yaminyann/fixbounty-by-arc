@@ -70,7 +70,7 @@ export function ReviewDialog({ bounty, onClose }: { bounty: AdminBounty | null; 
           <div className="flex flex-wrap items-center gap-2">
             <ModerationBadge status={bounty.moderationStatus} />
             <StatusBadge status={bounty.status} deadline={bounty.deadline} />
-            <span className="num text-sm font-bold">{formatUsdc(bounty.rewardAmount)} USDC</span>
+            <span className="num text-sm font-semibold">{formatUsdc(bounty.rewardAmount)} USDC</span>
           </div>
 
           {!bounty.metadataVerified && <Callout tone="warn" title="Description not published">The creator created this on-chain but never attached the text, so it cannot be approved.</Callout>}
@@ -92,19 +92,19 @@ export function ReviewDialog({ bounty, onClose }: { bounty: AdminBounty | null; 
 
           {bounty.description && (
             <div className="space-y-1">
-              <h3 className="font-display font-bold">Description</h3>
+              <h3 className="font-display font-semibold">Description</h3>
               <p className="prose-plain text-sm">{bounty.description}</p>
             </div>
           )}
           {bounty.acceptanceCriteria && (
             <div className="space-y-1">
-              <h3 className="font-display font-bold">How a fix is judged</h3>
+              <h3 className="font-display font-semibold">How a fix is judged</h3>
               <p className="prose-plain text-sm">{bounty.acceptanceCriteria}</p>
             </div>
           )}
           {bounty.links.length > 0 && (
             <div className="space-y-1">
-              <h3 className="font-display font-bold">Links</h3>
+              <h3 className="font-display font-semibold">Links</h3>
               <ul className="space-y-1 text-sm">
                 {bounty.links.map((l) => (
                   <li key={l}>
@@ -115,7 +115,7 @@ export function ReviewDialog({ bounty, onClose }: { bounty: AdminBounty | null; 
             </div>
           )}
           <div className="space-y-2">
-            <h3 className="font-display font-bold">Prize structure</h3>
+            <h3 className="font-display font-semibold">Prize structure</h3>
             <PrizeLadder shares={bounty.prizeShares} payouts={computePayouts(BigInt(bounty.rewardAmount), bounty.prizeShares)} />
           </div>
 

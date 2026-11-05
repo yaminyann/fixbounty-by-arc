@@ -3,10 +3,12 @@ import { query } from '../db.js'
 import { requireAuth, requireLinkedWallet } from '../auth.js'
 import { clampInt, route } from '../lib/http.js'
 import { BOUNTY_LIST_COLUMNS } from '../services/projections.js'
+import { workspaceRouter } from './workspace.js'
 
 export const meRouter = Router()
 
 meRouter.use(requireAuth, requireLinkedWallet)
+meRouter.use(workspaceRouter)
 
 /** Bounties the signed-in creator posted, including ones still waiting for admin approval. */
 meRouter.get(
@@ -35,6 +37,8 @@ meRouter.get(
     const offset = clampInt(req.query.offset, 0, 0, 10_000)
     const rows = await query(
       `SELECT s.id, s.created_at AS "createdAt", s.position, s.notes_verified AS "notesVerified",
+              s.review_status AS "reviewStatus",
+              (SELECT COUNT(*)::int FROM review_comments c WHERE c.target_type = 'submission' AND c.target_id = s.id) AS "commentCount",
               s.description, s.pull_request_url AS "pullRequestUrl",
               b.onchain_id::int AS "onchainId", b.title AS "bountyTitle", b.onchain_status AS "bountyStatus",
               b.reward_amount::text AS "rewardAmount", b.prize_payouts::text[] AS "prizePayouts",

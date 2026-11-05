@@ -8,6 +8,7 @@ import { HttpError, clampInt, parse, parseOnchainId, queryString, route } from '
 import { TtlCache } from '../lib/limits.js'
 import { indexerStatus } from '../services/indexer.js'
 import { BOUNTY_LIST_COLUMNS, toTsQuery } from '../services/projections.js'
+import { notify } from '../services/notify.js'
 
 export const adminRouter = Router()
 
@@ -200,7 +201,92 @@ adminRouter.post(
       [email, `moderation.${decision}`, String(onchainId), JSON.stringify({ from: bounty.moderation_status, note: note ?? null })],
     )
 
+    if (decision !== 'pending') {
+      const owner = await query<{ creator_user_id: string | null; title: string }>('SELECT creator_user_id, title FROM bounties WHERE id = $1', [bounty.id])
+      await notify({
+        userId: owner.rows[0]?.creator_user_id,
+        kind: decision === 'approved' ? 'bounty_approved' : 'bounty_rejected',
+        title: decision === 'approved' ? 'Your bounty is live' : 'Your bounty was not approved',
+        body: decision === 'rejected' ? `${owner.rows[0]?.title}: ${note}` : (owner.rows[0]?.title ?? ''),
+        link: `/bounty/${onchainId}`,
+      })
+    }
+
     res.json({ onchainId, moderationStatus: decision })
+  }),
+)
+
+// ---------------------------------------------------------------------------
+// Categories and projects
+// ---------------------------------------------------------------------------
+
+adminRouter.get(
+  '/categories',
+  route(async (_req: Request, res: Response) => {
+    const rows = await query(
+      `SELECT c.slug, c.name, c.description, c.icon, c.examples, c.sort_order AS "sortOrder", c.active,
+              (SELECT COUNT(*)::int FROM bounties b WHERE b.category = c.slug) AS "bountyCount"
+         FROM categories c ORDER BY c.sort_order, c.name`,
+    )
+    res.json({ items: rows.rows })
+  }),
+)
+
+const CategorySchema = z.object({
+  slug: z.string().trim().toLowerCase().regex(/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/, 'Use letters, numbers and hyphens'),
+  name: z.string().trim().min(2).max(60),
+  description: z.string().trim().max(240).default(''),
+  icon: z.enum(['shield-check', 'code', 'palette', 'telescope', 'users', 'flask-conical', 'megaphone', 'book-open', 'globe', 'cpu', 'layers', 'sparkles']).default('code'),
+  examples: z.array(z.string().trim().min(1).max(60)).max(8).default([]),
+  sortOrder: z.number().int().min(0).max(10_000).default(100),
+  active: z.boolean().default(true),
+})
+
+adminRouter.post(
+  '/categories',
+  route(async (req: Request, res: Response) => {
+    const c = parse(CategorySchema, req.body)
+    await query(
+      `INSERT INTO categories (slug, name, description, icon, examples, sort_order, active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, icon = EXCLUDED.icon,
+         examples = EXCLUDED.examples, sort_order = EXCLUDED.sort_order, active = EXCLUDED.active`,
+      [c.slug, c.name, c.description, c.icon, c.examples, c.sortOrder, c.active],
+    )
+    await query(`INSERT INTO admin_audit_log (admin_email, action, target_type, target_id, detail) VALUES ($1, 'category.save', 'category', $2, $3)`, [
+      adminEmail(req),
+      c.slug,
+      JSON.stringify({ name: c.name, active: c.active }),
+    ])
+    res.json({ ok: true })
+  }),
+)
+
+adminRouter.get(
+  '/projects',
+  route(async (req: Request, res: Response) => {
+    const limit = clampInt(req.query.limit, 20, 1, 100)
+    const offset = clampInt(req.query.offset, 0, 0, 100_000)
+    const rows = await query<{ total: string }>(
+      `SELECT p.id, p.slug, p.name, p.status, p.owner_wallet AS "ownerWallet", u.email AS "ownerEmail", p.created_at AS "createdAt",
+              (SELECT COUNT(*)::int FROM bounties b WHERE b.project_id = p.id) AS "bountyCount", COUNT(*) OVER()::text AS total
+         FROM projects p LEFT JOIN users u ON u.id = p.owner_user_id ORDER BY p.created_at DESC LIMIT $1 OFFSET $2`,
+      [limit, offset],
+    )
+    const total = rows.rows[0] ? Number(rows.rows[0].total) : 0
+    res.json({ items: rows.rows.map(({ total: _t, ...rest }) => rest), total, limit, offset })
+  }),
+)
+
+adminRouter.post(
+  '/projects/:slug/status',
+  route(async (req: Request, res: Response) => {
+    const { status } = parse(z.object({ status: z.enum(['active', 'hidden']) }), req.body)
+    const slug = String(req.params.slug).toLowerCase()
+    const updated = await query('UPDATE projects SET status = $2, updated_at = NOW() WHERE slug = $1 RETURNING id', [slug, status])
+    if (updated.rowCount === 0) throw new HttpError(404, 'Project not found')
+    await query(`INSERT INTO admin_audit_log (admin_email, action, target_type, target_id, detail) VALUES ($1, $2, 'project', $3, '{}'::jsonb)`, [adminEmail(req), `project.${status}`, slug])
+    res.json({ slug, status })
   }),
 )
 

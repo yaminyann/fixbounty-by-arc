@@ -4,6 +4,16 @@
 
 An escrow board for open-source bug fixes on Arc Testnet. Maintainers lock a USDC prize in `BountyBoard`; contributors submit work; the maintainer picks winners (one, several, or ranked places); each winner claims their share from the contract. An admin must approve a bounty before it appears on the website. Platform fees go to a fixed treasury wallet.
 
+## Contribution ecosystem (migration 004)
+
+BountyFi is a work and contribution platform, not only a bug board. Application-level modules sit around the unchanged contract: categories (table, admin-managed), project workspaces, listing details on bounties (category, difficulty, skills, work mode, project, instructions, eligibility; not part of the on-chain hash), milestones, review threads, team coordination, recurring programs, contributor profiles and notifications. Full detail and limits: `docs/ECOSYSTEM.md`.
+
+- The contract escrows one prize per bounty and pays by place. Milestones, team shares and recurring programs are coordination records and never move USDC. Say so in the UI wherever they appear.
+- Mark facts as verified on-chain only when they come from indexed contract events (`SourceBadge`). Never show invented statistics, scores or activity.
+- Hashed bounty and submission text is still immutable. New optional fields go in the `listing` object of `POST /api/bounties` or in `POST /api/bounties/:id/listing`, never into `src/lib/metadata.ts`.
+- Routes: `server/src/routes/{projects,reviews,milestones,teams,profiles,categories,workspace,notifications}.ts`, shared rules in `server/src/lib/ecosystem.ts`, notifications via `services/notify.ts`. Frontend hooks and types: `src/lib/api/ecosystem.ts`; navigation: `src/lib/nav.ts`; workspace shell: `components/layout/Sidebar.tsx`.
+- `server/test/ecosystem.mjs` extends the end-to-end run; keep it passing.
+
 ## Tech stack
 
 - Frontend: React 18, Vite, TypeScript, Tailwind, React Router v7, wagmi v2 + viem v2 (own wallet dialog, no ConnectKit), TanStack Query.

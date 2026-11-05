@@ -8,6 +8,14 @@ interface TabItem<T extends string> {
   count?: number
 }
 
+const TAB_BASE = 'relative -mb-px flex items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition-colors'
+const TAB_ACTIVE = 'border-ink text-ink'
+const TAB_IDLE = 'border-transparent text-mute hover:text-ink'
+
+function Count({ n, active }: { n: number; active: boolean }) {
+  return <span className={cn('num rounded-full px-1.5 text-xs', active ? 'bg-ink text-white' : 'bg-ink/5 text-mute')}>{n}</span>
+}
+
 /** Tab strip for in-page views. Uses buttons with real tab semantics. */
 export function Tabs<T extends string>({
   items,
@@ -23,7 +31,7 @@ export function Tabs<T extends string>({
   className?: string
 }) {
   return (
-    <div role="tablist" aria-label={label} className={cn('flex gap-1 overflow-x-auto overflow-y-hidden border-b-2 border-ink', className)}>
+    <div role="tablist" aria-label={label} className={cn('flex gap-1 overflow-x-auto overflow-y-hidden border-b border-line', className)}>
       {items.map((item) => {
         const active = item.value === value
         return (
@@ -35,15 +43,10 @@ export function Tabs<T extends string>({
             aria-selected={active}
             aria-controls={`panel-${item.value}`}
             onClick={() => onChange(item.value)}
-            className={cn(
-              '-mb-[2px] flex items-center gap-2 whitespace-nowrap rounded-t border-2 border-b-0 px-4 py-2 text-sm font-bold transition-colors',
-              active ? 'border-ink bg-signal text-ink' : 'border-transparent text-mute hover:bg-white hover:text-ink',
-            )}
+            className={cn(TAB_BASE, active ? TAB_ACTIVE : TAB_IDLE)}
           >
             {item.label}
-            {item.count !== undefined && (
-              <span className={cn('rounded px-1.5 text-xs', active ? 'bg-ink text-white' : 'bg-line text-ink')}>{item.count}</span>
-            )}
+            {item.count !== undefined && <Count n={item.count} active={active} />}
           </button>
         )
       })}
@@ -72,8 +75,8 @@ export function Segmented<T extends string>({
   label: string
 }) {
   return (
-    <div role="radiogroup" aria-label={label} className="inline-flex overflow-hidden rounded border-2 border-ink bg-white">
-      {items.map((item, i) => {
+    <div role="radiogroup" aria-label={label} className="inline-flex gap-0.5 rounded-md bg-ink/5 p-0.5">
+      {items.map((item) => {
         const active = item.value === value
         return (
           <button
@@ -83,9 +86,8 @@ export function Segmented<T extends string>({
             aria-checked={active}
             onClick={() => onChange(item.value)}
             className={cn(
-              'h-9 px-3 text-sm font-bold transition-colors',
-              i > 0 && 'border-l-2 border-ink',
-              active ? 'bg-ink text-white' : 'hover:bg-signal-soft',
+              'h-8 rounded px-3 text-sm font-medium transition-colors',
+              active ? 'bg-surface text-ink shadow-card' : 'text-mute hover:text-ink',
             )}
           >
             {item.label}
@@ -97,22 +99,17 @@ export function Segmented<T extends string>({
 }
 
 /** Route-based tab strip (each tab is its own URL). */
-export function RouteTabs({ items, label }: { items: { to: string; label: string; end?: boolean }[]; label: string }) {
+export function RouteTabs({ items, label }: { items: { to: string; label: string; end?: boolean; count?: number }[]; label: string }) {
   return (
-    <nav aria-label={label} className="flex gap-1 overflow-x-auto overflow-y-hidden border-b-2 border-ink">
+    <nav aria-label={label} className="flex gap-1 overflow-x-auto overflow-y-hidden border-b border-line">
       {items.map((item) => (
-        <NavLink
-          key={item.to}
-          to={item.to}
-          end={item.end}
-          className={({ isActive }) =>
-            cn(
-              '-mb-[2px] whitespace-nowrap rounded-t border-2 border-b-0 px-4 py-2 text-sm font-bold transition-colors',
-              isActive ? 'border-ink bg-signal text-ink' : 'border-transparent text-mute hover:bg-white hover:text-ink',
-            )
-          }
-        >
-          {item.label}
+        <NavLink key={item.to} to={item.to} end={item.end} className={({ isActive }) => cn(TAB_BASE, isActive ? TAB_ACTIVE : TAB_IDLE)}>
+          {({ isActive }) => (
+            <>
+              {item.label}
+              {item.count !== undefined && item.count > 0 && <Count n={item.count} active={isActive} />}
+            </>
+          )}
         </NavLink>
       ))}
     </nav>

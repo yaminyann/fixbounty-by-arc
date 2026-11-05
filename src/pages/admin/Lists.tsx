@@ -54,7 +54,7 @@ export function Submissions() {
     {
       header: 'Bounty',
       cell: (r) => (
-        <Link className="font-bold underline decoration-ink/30 underline-offset-2 hover:decoration-ink" to={`/bounty/${r.onchainId}`}>
+        <Link className="font-semibold underline decoration-ink/30 underline-offset-2 hover:decoration-ink" to={`/bounty/${r.onchainId}`}>
           #{r.onchainId} {r.bountyTitle}
         </Link>
       ),
@@ -101,7 +101,7 @@ export function Users() {
         <div className="flex items-center gap-2">
           <Avatar name={u.displayName ?? u.email} src={u.photoUrl} size={28} />
           <div className="min-w-0 text-xs">
-            <p className="truncate font-bold">{u.displayName ?? 'No name'}</p>
+            <p className="truncate font-semibold">{u.displayName ?? 'No name'}</p>
             <p className="truncate text-mute">{u.email}</p>
           </div>
         </div>
@@ -139,7 +139,7 @@ export function Revenue() {
   const columns: Column<AdminFee>[] = [
     { header: 'When', cell: (f) => <span className="text-xs">{formatDate(f.time, true)}</span> },
     { header: 'Type', cell: (f) => (f.kind === 0 ? <Badge tone="info">Post fee 0.5%</Badge> : <Badge tone="ok">Claim fee 5%</Badge>) },
-    { header: 'Amount (USDC)', align: 'right', cell: (f) => <span className="num font-bold">{formatUsdc(f.amount, 4)}</span> },
+    { header: 'Amount (USDC)', align: 'right', cell: (f) => <span className="num font-semibold">{formatUsdc(f.amount, 4)}</span> },
     {
       header: 'Bounty',
       cell: (f) => (
@@ -266,8 +266,8 @@ export function System() {
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
-      <section className="rounded-md border-2 border-ink bg-white p-5">
-        <h2 className="mb-2 font-display text-xl font-bold">Chain indexer</h2>
+      <section className="rounded-md border border-line bg-white p-5">
+        <h2 className="mb-2 font-display text-xl font-semibold">Chain indexer</h2>
         <dl>
           <Row label="Status">
             {!s.indexer.running ? <Badge tone="danger">Not running</Badge> : s.indexer.holdsLock ? <Badge tone="ok">Running</Badge> : <Badge tone="warn">Standby</Badge>}
@@ -280,8 +280,8 @@ export function System() {
         {s.indexer.lastError && <Callout tone="danger" className="mt-3" title="Last error">{s.indexer.lastError}</Callout>}
       </section>
 
-      <section className="rounded-md border-2 border-ink bg-white p-5">
-        <h2 className="mb-2 font-display text-xl font-bold">Services</h2>
+      <section className="rounded-md border border-line bg-white p-5">
+        <h2 className="mb-2 font-display text-xl font-semibold">Services</h2>
         <dl>
           <Row label="Database latency"><span className="num">{s.database.latencyMs} ms</span></Row>
           <Row label="Connections"><span className="num">{s.database.poolTotal} open, {s.database.poolIdle} idle, {s.database.poolWaiting} waiting</span></Row>
@@ -290,8 +290,8 @@ export function System() {
         </dl>
       </section>
 
-      <section className="rounded-md border-2 border-ink bg-white p-5 lg:col-span-2">
-        <h2 className="mb-2 font-display text-xl font-bold">Addresses and access</h2>
+      <section className="rounded-md border border-line bg-white p-5 lg:col-span-2">
+        <h2 className="mb-2 font-display text-xl font-semibold">Addresses and access</h2>
         <dl>
           <Row label="Bounty contract">{s.contract ? <AddressChip address={s.contract} /> : 'Not configured'}</Row>
           <Row label="USDC token"><AddressChip address={s.usdc} /></Row>

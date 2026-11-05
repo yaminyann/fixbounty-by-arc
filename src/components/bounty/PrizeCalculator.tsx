@@ -38,7 +38,7 @@ export function PrizeCalculator() {
       {reward && payouts ? (
         <div className="grid gap-8 md:grid-cols-2">
           <div>
-            <h3 className="mb-3 font-display text-lg font-bold">The poster pays</h3>
+            <h3 className="mb-3 font-display text-lg font-semibold">The poster pays</h3>
             <FeeLedger
               lines={[
                 { label: 'Prize pool, held in escrow', value: `${formatUsdc(reward)} USDC` },
@@ -48,7 +48,7 @@ export function PrizeCalculator() {
             />
           </div>
           <div>
-            <h3 className="mb-3 font-display text-lg font-bold">Each winner receives</h3>
+            <h3 className="mb-3 font-display text-lg font-semibold">Each winner receives</h3>
             <FeeLedger
               lines={payouts.map((gross, i) => ({
                 label: `${i + 1}${['st', 'nd', 'rd'][i] ?? 'th'} place, after 5% fee`,

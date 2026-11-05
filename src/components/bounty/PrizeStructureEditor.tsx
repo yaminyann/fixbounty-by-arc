@@ -45,7 +45,7 @@ export function PrizeStructureEditor({ config, onChange, reward }: Props) {
 
   return (
     <fieldset className="space-y-5">
-      <legend className="mb-1 text-sm font-bold">How the prize is shared</legend>
+      <legend className="mb-1 text-sm font-semibold">How the prize is shared</legend>
 
       <Segmented
         label="Prize structure"
@@ -88,7 +88,7 @@ export function PrizeStructureEditor({ config, onChange, reward }: Props) {
               </Field>
             ))}
           </div>
-          <p className={`num text-sm font-bold ${Math.round(total * 100) === 10_000 ? 'text-ok' : 'text-danger'}`}>Total: {bpsToPercent(Math.round(total * 100))}%</p>
+          <p className={`num text-sm font-semibold ${Math.round(total * 100) === 10_000 ? 'text-ok' : 'text-danger'}`}>Total: {bpsToPercent(Math.round(total * 100))}%</p>
         </div>
       )}
 

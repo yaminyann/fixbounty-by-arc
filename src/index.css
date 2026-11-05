@@ -28,13 +28,13 @@
 
   ::selection {
     background: #fde047;
-    color: #000;
+    color: #0a0a0a;
   }
 
   :focus-visible {
-    outline: 2px solid #000;
+    outline: 2px solid #0a0a0a;
     outline-offset: 2px;
-    border-radius: 2px;
+    border-radius: 4px;
   }
 
   .on-ink :focus-visible {
@@ -63,11 +63,20 @@
     @apply flex items-baseline gap-2;
   }
   .ledger-line > .leader {
-    @apply min-w-4 flex-1 translate-y-[-3px] border-b border-dotted border-mute/50;
+    @apply min-w-4 flex-1 translate-y-[-3px] border-b border-dotted border-mute/40;
   }
 
   .prose-plain {
     @apply whitespace-pre-wrap break-words text-base text-ink;
     max-width: 68ch;
+  }
+
+  /* Quiet surface used for grouped content */
+  .panel {
+    @apply rounded-lg border border-line bg-surface;
+  }
+
+  .eyebrow {
+    @apply text-xs font-medium text-mute;
   }
 }

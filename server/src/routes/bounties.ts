@@ -9,6 +9,7 @@ import { TtlCache, rateLimit } from '../lib/limits.js'
 import { BountyMetadataSchema, SubmissionMetadataSchema, bountyCommitment, submissionCommitment } from '../lib/metadata.js'
 import { syncBounty, upsertChainBounty } from '../services/bountySync.js'
 import { nudgeIndexer } from '../services/indexer.js'
+import { DIFFICULTIES, ListingSchema, SLUG_RE, isBountyCreator, likePattern, loadBountyAccess, resolveListing } from '../lib/ecosystem.js'
 import {
   BOUNTY_DETAIL_COLUMNS,
   BOUNTY_DETAIL_FROM,
@@ -43,6 +44,15 @@ bountiesRouter.get(
     const statusParam = queryString(req.query.status, 20)
     const openOnly = req.query.open === '1' || req.query.open === 'true'
     const creator = queryString(req.query.creator, 42)?.toLowerCase()
+    const state = queryString(req.query.state, 16)
+    const category = queryString(req.query.category, 40)?.toLowerCase()
+    const difficulty = queryString(req.query.difficulty, 12)?.toLowerCase()
+    const projectSlug = queryString(req.query.project, 40)?.toLowerCase()
+    const mode = queryString(req.query.mode, 8)?.toLowerCase()
+    const skill = queryString(req.query.skill, 32)?.toLowerCase()
+    const minReward = clampInt(req.query.minReward, 0, 0, 1_000_000_000)
+    const maxReward = clampInt(req.query.maxReward, 0, 0, 1_000_000_000)
+    const deadlineWithin = clampInt(req.query.deadlineWithin, 0, 0, 366)
 
     const statuses = statusParam
       ? statusParam
@@ -51,12 +61,52 @@ bountiesRouter.get(
           .filter((n) => Number.isInteger(n) && n >= 0 && n <= 5)
       : DEFAULT_PUBLIC_STATUSES
 
-    const cacheKey = JSON.stringify([limit, offset, sort, search, statuses, openOnly, creator])
+    const cacheKey = JSON.stringify([limit, offset, sort, search, statuses, openOnly, creator, state, category, difficulty, projectSlug, mode, skill, minReward, maxReward, deadlineWithin])
     const result = await listCache.get(cacheKey, async () => {
       const params: unknown[] = [statuses.length > 0 ? statuses : DEFAULT_PUBLIC_STATUSES]
       let where = `b.moderation_status = 'approved' AND b.metadata_verified AND b.onchain_status = ANY($1::int[])`
 
       if (openOnly) where += ` AND b.onchain_status = 1 AND b.deadline > NOW()`
+
+      // Marketplace states replace the raw status list (parameter $1 stays referenced so the query shape is stable).
+      const base = `b.moderation_status = 'approved' AND b.metadata_verified AND $1::int[] IS NOT NULL`
+      if (state === 'open') where = `${base} AND b.onchain_status = 1 AND b.deadline > NOW()`
+      else if (state === 'in_progress') where = `${base} AND ((b.onchain_status = 1 AND b.deadline <= NOW()) OR b.onchain_status = 2)`
+      else if (state === 'completed') where = `${base} AND b.onchain_status = 3`
+      else if (state === 'cancelled') where = `${base} AND b.onchain_status IN (4, 5)`
+
+      if (category && /^[a-z0-9-]{1,40}$/.test(category)) {
+        params.push(category)
+        where += ` AND b.category = $${params.length}`
+      }
+      if (difficulty && (DIFFICULTIES as readonly string[]).includes(difficulty)) {
+        params.push(difficulty)
+        where += ` AND b.difficulty = $${params.length}`
+      }
+      if (mode === 'solo' || mode === 'team') {
+        params.push(mode)
+        where += ` AND b.work_mode = $${params.length}`
+      }
+      if (projectSlug && SLUG_RE.test(projectSlug)) {
+        params.push(projectSlug)
+        where += ` AND b.project_id = (SELECT id FROM projects WHERE slug = $${params.length} AND status = 'active')`
+      }
+      if (skill) {
+        params.push(skill)
+        where += ` AND ($${params.length} = ANY(b.skills) OR $${params.length} = ANY(b.tags))`
+      }
+      if (minReward > 0) {
+        params.push(String(BigInt(minReward) * 1_000_000n))
+        where += ` AND b.reward_amount >= $${params.length}::bigint`
+      }
+      if (maxReward > 0) {
+        params.push(String(BigInt(maxReward) * 1_000_000n))
+        where += ` AND b.reward_amount <= $${params.length}::bigint`
+      }
+      if (deadlineWithin > 0) {
+        params.push(deadlineWithin)
+        where += ` AND b.deadline > NOW() AND b.deadline <= NOW() + ($${params.length}::int * INTERVAL '1 day')`
+      }
       if (creator && /^0x[0-9a-f]{40}$/.test(creator)) {
         params.push(creator)
         where += ` AND b.creator_wallet = $${params.length}`
@@ -67,7 +117,10 @@ bountiesRouter.get(
         params.push(tsQuery)
         const tsIdx = params.length
         params.push(search.toLowerCase())
-        where += ` AND (b.search_tsv @@ to_tsquery('simple', $${tsIdx}) OR $${params.length} = ANY(b.tags))`
+        const tagIdx = params.length
+        params.push(likePattern(search.toLowerCase()))
+        where += ` AND (b.search_tsv @@ to_tsquery('simple', $${tsIdx}) OR $${tagIdx} = ANY(b.tags) OR $${tagIdx} = ANY(b.skills)
+          OR b.project_id IN (SELECT p.id FROM projects p WHERE p.status = 'active' AND LOWER(p.name) LIKE $${params.length}))`
       }
 
       params.push(limit, offset)
@@ -151,6 +204,8 @@ const CreateBountySchema = BountyMetadataSchema.extend({
     .string()
     .regex(/^0x[0-9a-fA-F]{64}$/)
     .optional(),
+  /** Listing details live beside the bounty and are not part of the on-chain content hash. */
+  listing: ListingSchema.optional(),
 })
 
 bountiesRouter.post(
@@ -159,9 +214,10 @@ bountiesRouter.post(
   requireAuth,
   requireLinkedWallet,
   route(async (req: Request, res: Response) => {
-    const { onchainId, txHash, ...meta } = parse(CreateBountySchema, req.body)
+    const { onchainId, txHash, listing, ...meta } = parse(CreateBountySchema, req.body)
     const user = req.user!
     const wallet = req.wallet!
+    const details = listing ? await resolveListing(listing, user.id) : null
 
     const chain = await readBounty(onchainId)
     if (!chain) throw new HttpError(409, 'Bounty not found on-chain yet. Wait for the transaction to confirm and retry.')
@@ -182,10 +238,42 @@ bountiesRouter.post(
       [rowId, meta.description, meta.acceptanceCriteria, [...new Set(meta.tags)], [...new Set(meta.links)], user.id, txHash ?? null],
     )
     if (updated.rowCount === 0) throw new HttpError(409, 'This bounty was already published by another account.')
+    if (details) await writeListing(rowId, details)
 
     nudgeIndexer()
     const bounty = await loadBountyRow(onchainId)
     res.status(201).json({ bounty })
+  }),
+)
+
+async function writeListing(rowId: string, d: Awaited<ReturnType<typeof resolveListing>>): Promise<void> {
+  await query(
+    `UPDATE bounties
+        SET category = $2, difficulty = $3, skills = $4, work_mode = $5, project_id = $6, recurring_program_id = $7,
+            submission_instructions = $8, eligibility = $9, updated_at = NOW()
+      WHERE id = $1`,
+    [rowId, d.category, d.difficulty, d.skills, d.workMode, d.projectId, d.recurringProgramId, d.submissionInstructions, d.eligibility],
+  )
+  listCache.invalidate()
+}
+
+// The creator can adjust how the bounty is listed (category, project, difficulty, team mode). The hashed text stays fixed.
+bountiesRouter.post(
+  '/:id/listing',
+  rateLimit({ windowMs: 60_000, max: 30 }),
+  requireAuth,
+  requireLinkedWallet,
+  route(async (req: Request, res: Response) => {
+    const id = parseOnchainId(req.params.id)
+    const listing = parse(ListingSchema, req.body)
+    const bounty = await loadBountyAccess(id)
+    if (!isBountyCreator(req, bounty)) throw new HttpError(403, 'Only the creator can change how this bounty is listed.')
+    if (bounty.work_mode === 'team' && listing.workMode === 'solo') {
+      const members = await query('SELECT 1 FROM bounty_team_members WHERE bounty_id = $1 AND status = $2 LIMIT 1', [bounty.id, 'active'])
+      if ((members.rowCount ?? 0) > 0) throw new HttpError(409, 'Remove the team members before switching back to a solo bounty.')
+    }
+    await writeListing(bounty.id, await resolveListing(listing, req.user!.id))
+    res.json({ ok: true })
   }),
 )
 
@@ -237,8 +325,15 @@ bountiesRouter.get(
         ORDER BY s.position NULLS LAST, s.created_at ASC`,
       [bounty.id],
     )
+    // Review progress and comment counts are only for the creator, the contributor themself and admins.
+    const viewerWallet = req.user ? await getLinkedWallet(req.user.id) : null
+    const reviewer = isAdminUser(req.user) || (viewerWallet !== null && viewerWallet === bounty.creatorWallet)
+    const submissions = (rows.rows as Array<{ submitterWallet: string; reviewStatus: string | null; commentCount: number | null }>).map((row) => {
+      const party = reviewer || (viewerWallet !== null && viewerWallet === row.submitterWallet)
+      return party ? row : { ...row, reviewStatus: null, commentCount: null }
+    })
     res.setHeader('Cache-Control', 'private, no-store')
-    res.json({ submissions: rows.rows })
+    res.json({ submissions })
   }),
 )
 

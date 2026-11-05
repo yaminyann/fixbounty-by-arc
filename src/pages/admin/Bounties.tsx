@@ -36,7 +36,7 @@ export function AdminBounties({ mode }: { mode: 'queue' | 'all' }) {
       header: 'Bounty',
       cell: (b) => (
         <div className="max-w-xs space-y-1">
-          <p className="font-bold leading-snug">
+          <p className="font-semibold leading-snug">
             <span className="num mr-1 text-mute">#{b.onchainId}</span>
             {b.title}
           </p>
@@ -53,7 +53,7 @@ export function AdminBounties({ mode }: { mode: 'queue' | 'all' }) {
         </div>
       ),
     },
-    { header: 'Prize', align: 'right', cell: (b) => <span className="num font-bold">{formatUsdc(b.rewardAmount)}</span> },
+    { header: 'Prize', align: 'right', cell: (b) => <span className="num font-semibold">{formatUsdc(b.rewardAmount)}</span> },
     { header: 'Chain state', cell: (b) => <StatusBadge status={b.status} deadline={b.deadline} /> },
     {
       header: 'Review',

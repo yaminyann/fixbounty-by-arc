@@ -40,10 +40,25 @@ export interface BountySummary {
   claimedCount: number
   submissionCount: number
   moderationStatus: Moderation
+  category: string | null
+  difficulty: Difficulty | null
+  skills: string[]
+  workMode: WorkMode
+  projectSlug: string | null
+  projectName: string | null
+  milestoneCount: number
   createdAt: string
 }
 
+export type Difficulty = 'beginner' | 'intermediate' | 'advanced'
+export type WorkMode = 'solo' | 'team'
+export type ReviewStatus = 'submitted' | 'changes_requested' | 'approved' | 'rejected'
+
 export interface BountyDetail extends BountySummary {
+  submissionInstructions: string | null
+  eligibility: string | null
+  recurringProgramId: string | null
+  projectLogo: string | null
   description: string | null
   acceptanceCriteria: string | null
   links: string[]
@@ -86,6 +101,9 @@ export interface Submission {
   submitterName: string | null
   submitterPhoto: string | null
   status: SubmissionStatus
+  /** Only the creator, the contributor and admins receive these two. */
+  reviewStatus: ReviewStatus | null
+  commentCount: number | null
 }
 
 export interface ActivityItem {
@@ -138,6 +156,8 @@ export interface MySubmission {
   deadline: string
   moderationStatus: Moderation
   status: SubmissionStatus
+  reviewStatus: ReviewStatus
+  commentCount: number
 }
 
 export interface MySummary {

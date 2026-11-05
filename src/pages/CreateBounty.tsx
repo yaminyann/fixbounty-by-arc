@@ -4,6 +4,7 @@ import { parseEventLogs } from 'viem'
 import { Check, CircleAlert } from 'lucide-react'
 import { RequireIdentity } from '@/components/layout/RequireIdentity'
 import { FeeLedger } from '@/components/bounty/FeeLedger'
+import { EMPTY_LISTING, ListingFields, toListingInput, type ListingForm } from '@/features/bounty/ListingFields'
 import { PrizeStructureEditor } from '@/components/bounty/PrizeStructureEditor'
 import { Button, ButtonLink } from '@/components/ui/Button'
 import { Callout, PageHeader, Spinner } from '@/components/ui/Feedback'
@@ -36,6 +37,8 @@ interface FormState {
   reward: string
   deadline: string
   prize: PrizeConfig
+  /** Listing details are stored beside the bounty and are not part of the on-chain hash. */
+  listing: ListingForm
 }
 
 interface Draft {
@@ -62,6 +65,7 @@ const EMPTY: FormState = {
   reward: '',
   deadline: defaultDeadline(),
   prize: DEFAULT_PRIZE_CONFIG,
+  listing: EMPTY_LISTING,
 }
 
 const initialSteps = (): Record<StepKey, StepState> => ({ create: 'todo', publish: 'todo', approve: 'todo', fund: 'todo' })
@@ -76,7 +80,18 @@ export default function CreateBounty() {
   const publish = usePublishBounty()
   const refresh = useRefreshBounty()
 
-  const [form, setForm] = useState<FormState>(EMPTY)
+  // Links from a project or a recurring program prefill the form.
+  const [form, setForm] = useState<FormState>(() => ({
+    ...EMPTY,
+    title: params.get('title') ?? '',
+    reward: params.get('reward') ?? '',
+    listing: {
+      ...EMPTY_LISTING,
+      project: params.get('project') ?? '',
+      program: params.get('program') ?? '',
+      category: params.get('category') ?? '',
+    },
+  }))
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [stepState, setSteps] = useState(initialSteps)
   const [touched, setTouched] = useState(false)
@@ -91,7 +106,7 @@ export default function CreateBounty() {
   // A flow that stopped half way (page closed, wallet rejected, network drop) resumes from its saved draft.
   const draft = useMemo(() => (wallet && resumeId ? loadDraft<Draft>(bountyDraftKey(wallet, resumeId)) : null), [wallet, resumeId])
   const created = localCreated ?? draft?.onchainId ?? null
-  const view = draft ? draft.form : form
+  const view = draft ? { ...draft.form, listing: draft.form.listing ?? EMPTY_LISTING } : form
   const steps: Record<StepKey, StepState> =
     touched || !draft ? stepState : { create: 'done', publish: draft.published ? 'done' : 'todo', approve: 'todo', fund: 'todo' }
 
@@ -184,6 +199,7 @@ export default function CreateBounty() {
         await publish.mutateAsync({
           onchainId,
           ...meta,
+          listing: toListingInput(view.listing),
           txHash: txHash || saved?.txHash || undefined,
         })
         saveDraft<Draft>(bountyDraftKey(wallet, onchainId), { ...(saved ?? { form: view, deadlineSec, onchainId, txHash }), published: true })
@@ -240,7 +256,7 @@ export default function CreateBounty() {
   return (
     <div>
       <PageHeader title="Post a bounty">
-        Describe the bug, set the prize, and lock it in the contract. An admin reviews the bounty before contributors can see it.
+        Describe the work, set the prize, and lock it in the contract. An admin reviews every bounty before contributors can see it.
       </PageHeader>
 
       <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_22rem]">
@@ -253,21 +269,21 @@ export default function CreateBounty() {
           }}
         >
           <fieldset className="space-y-5" disabled={locked}>
-            <legend className="mb-4 font-display text-xl font-bold">The problem</legend>
-            <Field label="Title" error={errors.title} hint="Name the bug, not the project.">
-              <Input value={view.title} maxLength={200} onChange={(e) => set('title', e.target.value)} placeholder="Dark mode flashes white on reload" />
+            <legend className="mb-4 font-display text-lg font-semibold">The work</legend>
+            <Field label="Title" error={errors.title} hint="Say what needs to be done, not who you are.">
+              <Input value={view.title} maxLength={200} onChange={(e) => set('title', e.target.value)} placeholder="Translate the onboarding guide into Spanish" />
             </Field>
-            <Field label="Description" error={errors.description} hint="What is broken, how to reproduce it, and where in the code to look.">
+            <Field label="Description" error={errors.description} hint="What is needed, why it matters, and where contributors should start.">
               <Textarea rows={8} value={view.description} onChange={(e) => set('description', e.target.value)} maxLength={10000} />
             </Field>
-            <Field label="How a fix will be judged" error={errors.acceptanceCriteria} hint="Concrete checks. Contributors read this before they start.">
+            <Field label="Requirements" error={errors.acceptanceCriteria} hint="Concrete checks for what counts as done. Contributors read this before they start.">
               <Textarea rows={4} value={view.acceptanceCriteria} onChange={(e) => set('acceptanceCriteria', e.target.value)} maxLength={5000} />
             </Field>
             <div className="grid gap-5 sm:grid-cols-2">
               <Field label="Tags" optional error={errors.tags} hint="Comma separated, up to 8.">
-                <Input value={view.tags} onChange={(e) => set('tags', e.target.value)} placeholder="react, css, bug" />
+                <Input value={view.tags} onChange={(e) => set('tags', e.target.value)} placeholder="react, docs, translation" />
               </Field>
-              <Field label="Links" optional error={errors.links} hint="One link per line, such as the issue.">
+              <Field label="Links" optional error={errors.links} hint="One link per line, such as the issue, brief or design file.">
                 <Textarea rows={2} value={view.links} onChange={(e) => set('links', e.target.value)} placeholder="https://github.com/org/repo/issues/42" />
               </Field>
             </div>
@@ -275,7 +291,13 @@ export default function CreateBounty() {
           </fieldset>
 
           <fieldset className="space-y-5" disabled={locked}>
-            <legend className="mb-4 font-display text-xl font-bold">Prize and deadline</legend>
+            <legend className="mb-1 font-display text-lg font-semibold">Listing details</legend>
+            <p className="-mt-1 pb-3 text-sm text-mute">How people find the bounty. Stored on BountyFi and editable later; not part of the on-chain text.</p>
+            <ListingFields value={view.listing} onChange={(listing) => set('listing', listing)} />
+          </fieldset>
+
+          <fieldset className="space-y-5" disabled={locked}>
+            <legend className="mb-4 font-display text-lg font-semibold">Prize and deadline</legend>
             <div className="grid gap-5 sm:grid-cols-2">
               <Field label="Prize pool (USDC)" error={errors.reward} hint="Total shared by all winners.">
                 <Input inputMode="decimal" value={view.reward} onChange={(e) => set('reward', e.target.value)} placeholder="250" />
@@ -290,11 +312,11 @@ export default function CreateBounty() {
         </form>
 
         <aside className="lg:sticky lg:top-24 lg:self-start" aria-label="Summary">
-          <div className="space-y-5 rounded-md border-2 border-ink bg-white p-5 shadow-hard">
-            <h2 className="font-display text-xl font-bold">Summary</h2>
+          <div className="space-y-5 rounded-lg border border-line bg-surface p-5 shadow-card">
+            <h2 className="font-display text-xl font-semibold">Summary</h2>
             <FeeLedger lines={summaryLines} />
             {usdc.balance !== undefined && (
-              <p className={`text-xs ${lowBalance ? 'font-bold text-danger' : 'text-mute'}`}>
+              <p className={`text-xs ${lowBalance ? 'font-semibold text-danger' : 'text-mute'}`}>
                 Your balance: <span className="num">{formatUsdc(usdc.balance, 4)} USDC</span>
               </p>
             )}
@@ -315,7 +337,7 @@ export default function CreateBounty() {
 
                 {lowBalance && (
                   <Callout tone="warn" title="Not enough USDC">
-                    <a className="font-bold underline" href="https://faucet.circle.com" target="_blank" rel="noopener noreferrer">
+                    <a className="font-semibold underline" href="https://faucet.circle.com" target="_blank" rel="noopener noreferrer">
                       Get test USDC from the Circle faucet
                     </a>{' '}
                     and come back.
@@ -343,7 +365,7 @@ export default function CreateBounty() {
 function StepIcon({ state }: { state: StepState }) {
   if (state === 'done')
     return (
-      <span aria-label="Done" className="grid size-5 place-items-center rounded-full border-2 border-ink bg-signal">
+      <span aria-label="Done" className="grid size-5 place-items-center rounded-full border border-line bg-signal">
         <Check size={12} strokeWidth={3} aria-hidden />
       </span>
     )

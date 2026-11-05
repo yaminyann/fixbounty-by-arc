@@ -52,7 +52,7 @@ export function WalletDialog() {
                   type="button"
                   onClick={() => void pick(connector)}
                   disabled={isPending}
-                  className="flex w-full items-center gap-3 rounded border-2 border-ink bg-white px-4 py-3 text-left font-bold hover:bg-signal-soft disabled:opacity-60"
+                  className="flex w-full items-center gap-3 rounded border border-line bg-white px-4 py-3 text-left font-semibold hover:bg-ink/5 disabled:opacity-60"
                 >
                   {connector.icon ? (
                     <img src={connector.icon} alt="" width={28} height={28} className="rounded" />

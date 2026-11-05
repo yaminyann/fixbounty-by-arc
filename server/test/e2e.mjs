@@ -14,6 +14,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import pg from 'pg'
 import { SignJWT, exportJWK, generateKeyPair } from 'jose'
+import { runEcosystemChecks } from './ecosystem.mjs'
 import { createPublicClient, createWalletClient, http as viemHttp, defineChain } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 
@@ -409,6 +410,7 @@ try {
   const t1 = Date.now()
   await Promise.all(Array.from({ length: 60 }, () => api('GET', `/bounties/${onchainId}`)))
   check(`60 parallel detail reads finish under 1.5s (${Date.now() - t1}ms)`, Date.now() - t1 < 1500)
+  await runEcosystemChecks({ api, tok, accounts, send, board, boardArtifact, usdc, mock, bountyCommitment, submissionCommitment, check, waitFor, db, reward })
 } catch (err) {
   failures += 1
   console.error('\nE2E aborted:', err)

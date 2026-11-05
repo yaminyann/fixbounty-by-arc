@@ -50,9 +50,9 @@ export function PrizeLadder({ shares, payouts, winners, claimed, selfAddress, co
         return (
           <li key={i}>
             <div className="flex items-baseline justify-between gap-3">
-              <span className="font-display font-bold">{ordinal(i + 1)} place</span>
+              <span className="font-display font-semibold">{ordinal(i + 1)} place</span>
               <span className="num text-sm">
-                {payout !== null && <span className="font-bold">{formatUsdc(payout)} USDC</span>}
+                {payout !== null && <span className="font-semibold">{formatUsdc(payout)} USDC</span>}
                 <span className="ml-2 text-mute">{bpsToPercent(share)}%</span>
               </span>
             </div>
@@ -64,7 +64,7 @@ export function PrizeLadder({ shares, payouts, winners, claimed, selfAddress, co
                 {winner ? (
                   <span className="inline-flex flex-wrap items-center gap-2">
                     <AddressChip address={winner} self={selfAddress?.toLowerCase() === winner.toLowerCase()} />
-                    <span className={cn('font-bold', isClaimed ? 'text-ok' : 'text-warn')}>{isClaimed ? 'Claimed' : 'Not claimed yet'}</span>
+                    <span className={cn('font-semibold', isClaimed ? 'text-ok' : 'text-warn')}>{isClaimed ? 'Claimed' : 'Not claimed yet'}</span>
                   </span>
                 ) : (
                   <span>Not awarded, returned to the creator</span>

@@ -28,8 +28,8 @@ export function Pagination({ total, limit, offset, onChange, className }: Pagina
   return (
     <nav aria-label="Pagination" className={cn('flex flex-wrap items-center justify-between gap-3', className)}>
       <p className="text-sm text-mute">
-        Showing <span className="num font-bold text-ink">{first}</span> to <span className="num font-bold text-ink">{last}</span> of{' '}
-        <span className="num font-bold text-ink">{total}</span>
+        Showing <span className="num font-semibold text-ink">{first}</span> to <span className="num font-semibold text-ink">{last}</span> of{' '}
+        <span className="num font-semibold text-ink">{total}</span>
       </p>
       <ul className="flex items-center gap-1">
         <li>
@@ -38,7 +38,7 @@ export function Pagination({ total, limit, offset, onChange, className }: Pagina
             onClick={() => go(current - 1)}
             disabled={current === 1}
             aria-label="Previous page"
-            className="grid size-9 place-items-center rounded border-2 border-ink bg-white hover:bg-signal-soft disabled:opacity-40"
+            className="grid size-9 place-items-center rounded border border-line bg-white hover:bg-ink/5 disabled:opacity-40"
           >
             <ChevronLeft size={16} aria-hidden />
           </button>
@@ -55,7 +55,7 @@ export function Pagination({ total, limit, offset, onChange, className }: Pagina
                 onClick={() => go(n)}
                 aria-current={n === current ? 'page' : undefined}
                 className={cn(
-                  'num size-9 rounded border-2 text-sm font-bold',
+                  'num size-9 rounded border-2 text-sm font-semibold',
                   n === current ? 'border-ink bg-ink text-white' : 'border-transparent hover:border-ink hover:bg-white',
                 )}
               >
@@ -70,7 +70,7 @@ export function Pagination({ total, limit, offset, onChange, className }: Pagina
             onClick={() => go(current + 1)}
             disabled={current === pages}
             aria-label="Next page"
-            className="grid size-9 place-items-center rounded border-2 border-ink bg-white hover:bg-signal-soft disabled:opacity-40"
+            className="grid size-9 place-items-center rounded border border-line bg-white hover:bg-ink/5 disabled:opacity-40"
           >
             <ChevronRight size={16} aria-hidden />
           </button>

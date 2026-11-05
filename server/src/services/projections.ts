@@ -17,6 +17,13 @@ export const BOUNTY_LIST_COLUMNS = `
   b.claimed_count AS "claimedCount",
   b.submission_count AS "submissionCount",
   b.moderation_status AS "moderationStatus",
+  b.category,
+  b.difficulty,
+  b.skills,
+  b.work_mode AS "workMode",
+  (SELECT p.slug FROM projects p WHERE p.id = b.project_id) AS "projectSlug",
+  (SELECT p.name FROM projects p WHERE p.id = b.project_id) AS "projectName",
+  (SELECT COUNT(*)::int FROM bounty_milestones m WHERE m.bounty_id = b.id) AS "milestoneCount",
   b.created_at AS "createdAt"`
 
 export const BOUNTY_DETAIL_COLUMNS = `
@@ -36,6 +43,10 @@ export const BOUNTY_DETAIL_COLUMNS = `
   b.moderation_note AS "moderationNote",
   b.moderated_at AS "moderatedAt",
   b.chain_synced_at AS "syncedAt",
+  b.submission_instructions AS "submissionInstructions",
+  b.eligibility,
+  b.recurring_program_id AS "recurringProgramId",
+  (SELECT p.logo_url FROM projects p WHERE p.id = b.project_id) AS "projectLogo",
   b.creator_user_id AS "creatorUserId",
   cu.display_name AS "creatorName",
   cu.photo_url AS "creatorPhoto"`
@@ -54,6 +65,8 @@ export const SUBMISSION_COLUMNS = `
   s.position,
   s.tx_hash AS "txHash",
   s.created_at AS "createdAt",
+  s.review_status AS "reviewStatus",
+  (SELECT COUNT(*)::int FROM review_comments rc WHERE rc.target_type = 'submission' AND rc.target_id = s.id) AS "commentCount",
   su.display_name AS "submitterName",
   su.photo_url AS "submitterPhoto",
   CASE

@@ -60,7 +60,7 @@ export function FundBounty({ bounty }: { bounty: BountyDetail }) {
       {short && (
         <Callout tone="warn" title="Your USDC balance is too low">
           You hold {formatUsdc(usdc.balance ?? 0n, 4)} USDC.{' '}
-          <a className="font-bold underline" href="https://faucet.circle.com" target="_blank" rel="noopener noreferrer">
+          <a className="font-semibold underline" href="https://faucet.circle.com" target="_blank" rel="noopener noreferrer">
             Get test USDC from the Circle faucet
           </a>
           .

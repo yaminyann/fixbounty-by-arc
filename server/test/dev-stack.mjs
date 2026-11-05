@@ -148,18 +148,18 @@ for (const who of ['creator', 'alice', 'bob', 'carol']) {
 }
 
 let nextId = 0
-async function seedBounty({ title, description, reward, shares, days = 10, tags = [], fund = true, approve = true }) {
+async function seedBounty({ title, description, reward, shares, days = 10, tags = [], fund = true, approve = true, listing, criteria }) {
   const meta = {
     title,
     description,
-    acceptanceCriteria: 'The change is merged in a pull request that passes the existing tests and is covered by a new one.',
+    acceptanceCriteria: criteria ?? 'The change is merged in a pull request that passes the existing tests and is covered by a new one.',
     tags,
     links: ['https://github.com/example/project/issues/' + (100 + nextId)],
   }
   const deadline = BigInt(Math.floor(Date.now() / 1000) + days * 86400)
   await send('creator', board, boardArtifact.abi, 'createBounty', [title, bountyCommitment(meta), reward, deadline, shares])
   const id = ++nextId
-  await api('POST', '/bounties', 'creator', { ...meta, onchainId: id })
+  await api('POST', '/bounties', 'creator', { ...meta, onchainId: id, listing })
   if (fund) {
     const total = reward + (reward * 50n) / 10_000n
     await send('creator', usdc, mock.abi, 'approve', [board, total])
@@ -176,7 +176,16 @@ async function submit(who, id, text) {
 }
 
 const usd = (n) => BigInt(n) * 1_000_000n
+await api('POST', '/projects', 'creator', {
+  slug: 'acme-labs',
+  name: 'Acme Labs',
+  tagline: 'Open-source tooling for web teams',
+  description: 'Acme Labs maintains open-source libraries for dashboards and design systems. We fund fixes, features, documentation and design work through BountyFi.',
+  websiteUrl: 'https://acme.example.com',
+  githubUrl: 'https://github.com/acme-labs',
+})
 const a = await seedBounty({
+  listing: { category: 'development', difficulty: 'intermediate', skills: ['react', 'css'], workMode: 'solo', project: 'acme-labs' },
   title: 'Dark mode flashes white on page reload',
   description:
     'When a visitor reloads any page with dark mode on, the page paints white for about 200 ms before the theme loads.\n\nThe theme class is applied from a React effect, which runs after first paint. It should be set by a script in the document head before the body renders.\n\nSteps to reproduce: enable dark mode, hard reload, watch the first frame.',
@@ -185,6 +194,7 @@ const a = await seedBounty({
   tags: ['react', 'css', 'ui'],
 })
 const b = await seedBounty({
+  listing: { category: 'development', difficulty: 'advanced', skills: ['typescript', 'i18n'], workMode: 'solo' },
   title: 'Date picker crashes when the locale uses a non-Latin calendar',
   description: 'Selecting a date with the Thai Buddhist calendar throws a RangeError in the formatting helper. A fix needs a regression test for at least two non-Gregorian locales.',
   reward: usd(120),
@@ -192,6 +202,7 @@ const b = await seedBounty({
   tags: ['typescript', 'i18n'],
 })
 const c = await seedBounty({
+  listing: { category: 'development', difficulty: 'advanced', skills: ['rust'], workMode: 'solo', project: 'acme-labs' },
   title: 'Memory leak in the websocket reconnect loop',
   description: 'Each reconnect attempt leaves the previous socket listeners attached. After a few hours of flaky network the tab holds hundreds of megabytes.',
   reward: usd(300),
@@ -207,7 +218,7 @@ await seedBounty({
   tags: ['cli', 'go'],
   approve: false,
 })
-const e = await seedBounty({ title: 'Typo-safe enum parsing in the importer', description: 'Unknown enum strings are silently mapped to the first value instead of failing the import.', reward: usd(90), shares: [6000, 4000], tags: ['python'] })
+const e = await seedBounty({ listing: { category: 'development', difficulty: 'beginner', skills: ['python'], workMode: 'solo', project: 'acme-labs' }, title: 'Typo-safe enum parsing in the importer', description: 'Unknown enum strings are silently mapped to the first value instead of failing the import.', reward: usd(90), shares: [6000, 4000], tags: ['python'] })
 
 await submit('alice', a, 'Moved theme initialisation into an inline script in index.html so the class is set before first paint, and added a Playwright check that screenshots the first frame.')
 await submit('bob', a, 'Reads the stored preference in a blocking head script and falls back to prefers-color-scheme. Includes a unit test for the fallback order.')
@@ -218,6 +229,7 @@ await send('creator', board, boardArtifact.abi, 'approveWinners', [BigInt(e), [a
 await send('alice', board, boardArtifact.abi, 'claimReward', [BigInt(e)])
 await api('POST', `/bounties/${e}/refresh`)
 void b
+await (await import('./seed-ecosystem.mjs')).seedEcosystem({ api, seedBounty, accounts, usd })
 
 console.log(`
 Dev stack ready

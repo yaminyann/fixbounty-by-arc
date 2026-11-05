@@ -27,7 +27,7 @@ createRoot(document.getElementById('root')!).render(
           <AuthProvider>
             <IdentityProvider>
               <App />
-              <Toaster position="bottom-right" toastOptions={{ classNames: { toast: 'font-sans' } }} />
+              <Toaster position="bottom-right" closeButton toastOptions={{ classNames: { toast: "font-sans !rounded-lg !border-line !shadow-pop" } }} />
             </IdentityProvider>
           </AuthProvider>
         </QueryClientProvider>

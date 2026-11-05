@@ -40,13 +40,13 @@ export function DataTable<T>({ caption, columns, rows, rowKey, loading, error, o
 
   return (
     <div className="space-y-4">
-      <div className={cn('overflow-x-auto rounded-md border-2 border-ink bg-white transition-opacity', dimmed && 'opacity-60')}>
+      <div className={cn('overflow-x-auto rounded-md border border-line bg-white transition-opacity', dimmed && 'opacity-60')}>
         <table className="w-full min-w-[40rem] border-collapse text-left text-sm">
           <caption className="sr-only">{caption}</caption>
           <thead>
-            <tr className="border-b-2 border-ink bg-paper">
+            <tr className="border-b border-line bg-paper">
               {columns.map((c) => (
-                <th key={c.header} scope="col" className={cn('whitespace-nowrap px-4 py-2.5 font-bold', c.align === 'right' && 'text-right', c.className)}>
+                <th key={c.header} scope="col" className={cn('whitespace-nowrap px-4 py-2.5 font-semibold', c.align === 'right' && 'text-right', c.className)}>
                   {c.header}
                 </th>
               ))}
@@ -54,7 +54,7 @@ export function DataTable<T>({ caption, columns, rows, rowKey, loading, error, o
           </thead>
           <tbody className="divide-y divide-line">
             {rows.map((row) => (
-              <tr key={rowKey(row)} className="align-top hover:bg-signal-soft/40">
+              <tr key={rowKey(row)} className="align-top hover:bg-ink/[0.03]">
                 {columns.map((c) => (
                   <td key={c.header} className={cn('px-4 py-3', c.align === 'right' && 'text-right', c.className)}>
                     {c.cell(row)}
