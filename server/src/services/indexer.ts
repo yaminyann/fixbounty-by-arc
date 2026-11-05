@@ -7,6 +7,7 @@ import { publicClient, readBounty, readBountyCount, type OnchainBounty } from '.
 import { applyWinnerPositions, upsertChainBounty } from './bountySync.js'
 import { notify } from './notify.js'
 import { reviewerUserIds } from '../lib/ecosystem.js'
+import { describeEvent, emitProjectEvent, type WebhookEvent } from './webhooks.js'
 
 /**
  * Chain indexer. The contract is the source of truth; this keeps PostgreSQL in step with it
@@ -138,6 +139,12 @@ async function processLogs(logs: DecodedLog[]): Promise<void> {
   )
   const times = await blockTimes(logs.map((l) => l.blockNumber))
 
+  // Project webhooks are sent after the transaction commits, so a slow chat service never holds the database.
+  const outgoing: Array<() => Promise<void>> = []
+  const queue = (rowId: string, event: WebhookEvent, title: string, onchainId: number, amount?: bigint | null) => {
+    outgoing.push(() => emitProjectEvent(rowId, event, describeEvent(event, title, onchainId, { amount: amount?.toString() ?? null })))
+  }
+
   await withTransaction(async (db) => {
     const rowIds = new Map<number, string>()
     for (const [id, state] of states) {
@@ -192,6 +199,7 @@ async function processLogs(logs: DecodedLog[]): Promise<void> {
                updated_at = NOW()`,
             [bountyRowId, actor, log.args.submissionHash as string, log.transactionHash],
           )
+          queue(bountyRowId, 'submission', state.title, onchainId)
           for (const reviewer of await reviewerUserIds(bountyRowId, db)) {
             await notify(
               {
@@ -227,12 +235,14 @@ async function processLogs(logs: DecodedLog[]): Promise<void> {
           actor = state.creator
           position = Number(log.args.winnerCount)
           amount = log.args.returnedToCreator as bigint
+          queue(bountyRowId, 'winners_picked', state.title, onchainId)
           break
         case 'RewardClaimed':
           actor = (log.args.contributor as string).toLowerCase()
           position = Number(log.args.position)
           amount = log.args.payout as bigint
           fee = log.args.fee as bigint
+          queue(bountyRowId, 'reward_claimed', state.title, onchainId, amount)
           break
         case 'BountyRefunded':
           actor = (log.args.creator as string).toLowerCase()
@@ -257,6 +267,8 @@ async function processLogs(logs: DecodedLog[]): Promise<void> {
       if (rowId) await applyWinnerPositions(rowId, state.winners, db)
     }
   })
+
+  for (const send of outgoing) await send()
 }
 
 async function indexNewBlocks(address: Address): Promise<void> {

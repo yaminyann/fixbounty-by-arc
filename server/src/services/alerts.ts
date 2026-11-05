@@ -62,7 +62,7 @@ export function matches(f: SearchFilters, b: BountyForMatch): boolean {
   return true
 }
 
-async function deliver(url: string, text: string): Promise<string | null> {
+export async function deliver(url: string, text: string): Promise<string | null> {
   const body = url.includes('discord') ? { content: text } : url.includes('slack') ? { text } : { text, content: text }
   try {
     const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(5_000) })

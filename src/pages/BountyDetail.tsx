@@ -20,6 +20,7 @@ import { ClaimPrize, ReclaimFunds } from '@/features/bounty/Settlement'
 import { SubmitWork } from '@/features/bounty/SubmitWork'
 import { useEncryption } from '@/features/bounty/useEncryption'
 import { TeamPanel } from '@/features/bounty/TeamPanel'
+import { ApplicationsPanel } from '@/features/bounty/ApplicationsPanel'
 import { useNow } from '@/hooks/useNow'
 import { useIdentity } from '@/contexts/IdentityContext'
 import { useActivity, useBounty, useSubmissions } from '@/lib/api/queries'
@@ -252,7 +253,7 @@ function ActionPanel({ bounty, submissions, now }: { bounty: Bounty; submissions
   return <RequireIdentity purpose="take part in this bounty">{content}</RequireIdentity>
 }
 
-type Tab = 'overview' | 'milestones' | 'team' | 'submissions' | 'history'
+type Tab = 'overview' | 'milestones' | 'team' | 'applicants' | 'submissions' | 'history'
 
 function Detail({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -317,6 +318,7 @@ export default function BountyDetail() {
     { value: 'overview', label: 'Overview' },
     ...(bounty.milestoneCount > 0 || isCreator ? [{ value: 'milestones' as Tab, label: 'Milestones', count: bounty.milestoneCount || undefined }] : []),
     ...(bounty.workMode === 'team' ? [{ value: 'team' as Tab, label: 'Team' }] : []),
+    ...(bounty.acceptsApplications ? [{ value: 'applicants' as Tab, label: 'Applicants', count: bounty.assignedCount || undefined }] : []),
     { value: 'submissions', label: 'Submissions', count: bounty.submissionCount },
     { value: 'history', label: 'History' },
   ]
@@ -361,6 +363,7 @@ export default function BountyDetail() {
               <Lock size={12} aria-hidden /> Encrypted reports
             </Badge>
           )}
+          {bounty.acceptsApplications && <Badge tone="info">Apply first{bounty.assignedCount > 0 ? ` · ${bounty.assignedCount} approved` : ''}</Badge>}
           <span className="num text-sm text-mute">#{bounty.onchainId}</span>
         </div>
         <h1 className="max-w-4xl font-display text-3xl font-semibold leading-tight sm:text-4xl">{bounty.title}</h1>
@@ -454,6 +457,7 @@ export default function BountyDetail() {
 
             {tab === 'milestones' && <MilestonesPanel bounty={bounty} wallet={me} isCreator={isCreator} open={open} />}
             {tab === 'team' && <TeamPanel bounty={bounty} wallet={me} isCreator={isCreator} open={open} />}
+            {tab === 'applicants' && <ApplicationsPanel bounty={bounty} wallet={me} isCreator={isCreator} open={open} />}
 
             {tab === 'submissions' &&
               (submissionsQuery.isError ? (

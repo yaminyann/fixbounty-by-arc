@@ -90,6 +90,28 @@ export async function seedEcosystem({ api, seedBounty, accounts, usd }) {
     cadence: 'weekly',
     rewardPerCycle: String(usd(40)),
   })
+  // Apply-first bounty, a rejected submission with an open dispute, and a project webhook-free analytics baseline.
+  const apply = await seedBounty({
+    title: 'Add keyboard shortcuts to the dashboard',
+    description: 'Add shortcuts for search, navigation and export, with a help overlay that lists them.',
+    criteria: 'Shortcuts work on all platforms, are documented and can be turned off.',
+    reward: usd(120),
+    shares: [10000],
+    tags: ['react', 'a11y'],
+    days: 18,
+    listing: { category: 'development', difficulty: 'beginner', skills: ['react', 'accessibility'], workMode: 'solo', project: 'acme-labs', acceptsApplications: true },
+  })
+  await api('POST', `/bounties/${apply}/applications`, 'carol', { message: 'I built a similar overlay last month and can start tomorrow.' })
+  await api('POST', `/bounties/${apply}/applications`, 'bob', { message: 'Happy to take this if nobody else is on it.' })
+  const apps = (await api('GET', `/bounties/${apply}/applications`, 'creator')).items
+  await api('POST', `/bounties/${apply}/applications/${apps.find((x) => x.wallet === accounts.carol.address.toLowerCase()).id}`, 'creator', { decision: 'approve' })
+
+  const firstSubs = (await api('GET', '/bounties/1/submissions', 'creator')).submissions
+  const bobSub = firstSubs.find((x) => x.submitterWallet === accounts.bob.address.toLowerCase())
+  await api('POST', `/reviews/submission/${bobSub.id}/decision`, 'creator', { decision: 'rejected', note: 'The fallback order does not match prefers-color-scheme.' })
+  const dispute = await api('POST', '/disputes', 'bob', { submissionId: bobSub.id, summary: 'My script reads the stored preference first and falls back to prefers-color-scheme, which is the order in the requirements.' })
+  await api('POST', `/disputes/${dispute.id}/comments`, 'creator', { body: 'The requirements ask for the system setting first when no choice is stored.' })
+
   await api('POST', '/me/profile', 'alice', {
     displayName: 'Alice Johnson',
     bio: 'Front-end engineer focused on accessible interfaces and developer tools.',

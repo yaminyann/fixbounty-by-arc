@@ -12,6 +12,7 @@ import { Button, ButtonLink } from '@/components/ui/Button'
 import { Dialog } from '@/components/ui/Dialog'
 import { Field, Input, Select, Textarea } from '@/components/ui/Form'
 import { Tabs } from '@/components/ui/Tabs'
+import { AnalyticsPanel, IntegrationsPanel } from '@/pages/workspace/ProjectTools'
 import { errorMessage } from '@/lib/api/client'
 import {
   useCategories,
@@ -557,7 +558,7 @@ function BadgeSnippet({ slug }: { slug: string }) {
   )
 }
 
-type ManageTab = 'bounties' | 'recurring' | 'members' | 'details'
+type ManageTab = 'bounties' | 'recurring' | 'members' | 'analytics' | 'integrations' | 'details'
 
 export function ManageProject() {
   const { slug } = useParams()
@@ -598,6 +599,8 @@ export function ManageProject() {
               { value: 'bounties', label: 'Bounties' },
               { value: 'recurring', label: 'Recurring programs' },
               { value: 'members', label: 'Members' },
+              { value: 'analytics', label: 'Analytics' },
+              { value: 'integrations', label: 'Integrations' },
               { value: 'details', label: 'Details' },
             ]}
           />
@@ -608,6 +611,8 @@ export function ManageProject() {
               </Section>
             )}
             {tab === 'recurring' && <Programs slug={query.data.project.slug} />}
+            {tab === 'analytics' && <AnalyticsPanel slug={query.data.project.slug} />}
+            {tab === 'integrations' && <IntegrationsPanel slug={query.data.project.slug} />}
             {tab === 'members' && <MembersPanel slug={query.data.project.slug} role={query.data.role} />}
             {tab === 'details' && (
               <div className="space-y-10">

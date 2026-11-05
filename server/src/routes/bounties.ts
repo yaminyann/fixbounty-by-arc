@@ -266,9 +266,9 @@ async function writeListing(rowId: string, d: Awaited<ReturnType<typeof resolveL
   await query(
     `UPDATE bounties
         SET category = $2, difficulty = $3, skills = $4, work_mode = $5, project_id = $6, recurring_program_id = $7,
-            submission_instructions = $8, eligibility = $9, confidential = $10, updated_at = NOW()
+            submission_instructions = $8, eligibility = $9, confidential = $10, accepts_applications = $11, updated_at = NOW()
       WHERE id = $1`,
-    [rowId, d.category, d.difficulty, d.skills, d.workMode, d.projectId, d.recurringProgramId, d.submissionInstructions, d.eligibility, d.confidential],
+    [rowId, d.category, d.difficulty, d.skills, d.workMode, d.projectId, d.recurringProgramId, d.submissionInstructions, d.eligibility, d.confidential, d.acceptsApplications],
   )
   listCache.invalidate()
 }

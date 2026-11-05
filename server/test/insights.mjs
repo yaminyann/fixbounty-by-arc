@@ -1,0 +1,177 @@
+// Checks for applications, disputes, project webhooks, analytics and the leaderboard.
+// Called by e2e.mjs after the trust checks, on the same chain, database and fake webhook receiver.
+
+export async function runInsightChecks(ctx, fakes) {
+  const { api, tok, accounts, send, board, boardArtifact, usdc, mock, bountyCommitment, submissionCommitment, check, waitFor, db } = ctx
+  let r
+  const usd = (n) => BigInt(n) * 1_000_000n
+  const hookTexts = () => fakes.hooks.map((h) => { try { return JSON.parse(h).text } catch { return h } })
+  console.log('\nApplications, disputes, integrations and insights')
+
+  // ---- applications ------------------------------------------------------------------------------------------
+  r = await api('POST', '/bounties/4/listing', { auth: tok.creator, body: { category: 'development', project: 'acme', skills: ['react'], workMode: 'solo', acceptsApplications: true } })
+  check('creator asks contributors to apply', r.status === 200, r.body)
+  r = await api('GET', '/bounties/4')
+  check('the listing says applications are expected', r.body.bounty.acceptsApplications === true && r.body.bounty.assignedCount === 0, r.body.bounty)
+
+  r = await api('POST', '/bounties/1/applications', { auth: tok.carol, body: {} })
+  check('bounties that do not ask for applications refuse them', r.status === 409 || r.status === 404, r.body)
+  r = await api('POST', '/bounties/4/applications', { auth: tok.creator, body: {} })
+  check('creators cannot apply to their own bounty', r.status === 403, r.body)
+  r = await api('POST', '/bounties/4/applications', { auth: tok.carol, body: { message: 'I can take the CSV part this week.' } })
+  check('carol applies', r.status === 201, r.body)
+  r = await api('POST', '/bounties/4/applications', { auth: tok.carol, body: {} })
+  check('duplicate applications are refused', r.status === 409, r.body)
+  r = await api('POST', '/bounties/4/applications', { auth: tok.bob, body: { message: 'Bob here.' } })
+  check('bob applies', r.status === 201, r.body)
+
+  r = await api('GET', '/bounties/4/applications', { auth: tok.creator })
+  check('the creator sees every application with its message', r.body.items.length === 2 && r.body.items.some((a) => a.message.startsWith('I can take')), r.body)
+  const carolApp = r.body.items.find((a) => a.wallet === accounts.carol.address.toLowerCase())
+  const bobApp = r.body.items.find((a) => a.wallet === accounts.bob.address.toLowerCase())
+  r = await api('GET', '/bounties/4/applications', { auth: tok.bob })
+  check('applicants see only their own message', r.body.items.length === 1 && r.body.items[0].message === 'Bob here.', r.body)
+  r = await api('GET', '/bounties/4/applications')
+  check('the public sees nobody until someone is approved', r.body.items.length === 0 && r.body.accepting === true, r.body)
+
+  r = await api('POST', `/bounties/4/applications/${carolApp.id}`, { auth: tok.bob, body: { decision: 'approve' } })
+  check('applicants cannot decide', r.status === 403, r.body)
+  r = await api('POST', `/bounties/4/applications/${bobApp.id}`, { auth: tok.creator, body: { decision: 'decline' } })
+  check('declining needs a reason', r.status === 400, r.body)
+  r = await api('POST', `/bounties/4/applications/${bobApp.id}`, { auth: tok.creator, body: { decision: 'decline', note: 'Already enough hands on the export.' } })
+  check('creator declines bob', r.status === 200, r.body)
+  r = await api('POST', `/bounties/4/applications/${carolApp.id}`, { auth: tok.creator, body: { decision: 'approve' } })
+  check('creator approves carol', r.status === 200, r.body)
+  r = await api('POST', '/bounties/4/applications', { auth: tok.bob, body: {} })
+  check('a declined contributor cannot reapply', r.status === 409, r.body)
+  r = await api('GET', '/bounties/4/applications')
+  check('the public now sees who was approved, without messages', r.body.items.length === 1 && r.body.items[0].message === '' && r.body.items[0].status === 'approved', r.body)
+  r = await api('GET', '/bounties/4')
+  check('the bounty counts its assigned contributors', r.body.bounty.assignedCount === 1)
+  r = await api('GET', '/me/notifications', { auth: tok.carol })
+  check('carol was notified of the approval', r.body.items.some((n) => n.kind === 'application_approved'))
+  r = await api('POST', '/bounties/4/applications/withdraw', { auth: tok.carol })
+  check('carol can withdraw', r.status === 200, r.body)
+  r = await api('GET', '/bounties/4')
+  check('withdrawn applications are no longer assigned', r.body.bounty.assignedCount === 0)
+
+  // ---- disputes ------------------------------------------------------------------------------------------------
+  const subs = (await api('GET', '/bounties/4/submissions', { auth: tok.creator })).body.submissions
+  const bySubmitter = (w) => subs.find((s) => s.submitterWallet === accounts[w].address.toLowerCase())
+  r = await api('POST', '/disputes', { auth: tok.carol, body: { submissionId: bySubmitter('carol').id, summary: 'My submission was never reviewed and I would like mediation.' } })
+  check('a dispute needs a reason the rules recognise', r.status === 409, r.body)
+  r = await api('POST', `/reviews/submission/${bySubmitter('carol').id}/decision`, { auth: tok.creator, body: { decision: 'rejected', note: 'Does not meet the requirements.' } })
+  check('creator rejects carol\'s write-up', r.status === 200, r.body)
+  r = await api('POST', '/disputes', { auth: tok.carol, body: { submissionId: bySubmitter('carol').id, summary: 'Too short' } })
+  check('a dispute needs a real explanation', r.status === 400, r.body)
+  r = await api('POST', '/disputes', { auth: tok.bob, body: { submissionId: bySubmitter('carol').id, summary: 'Trying to dispute someone else\'s work for them.' } })
+  check('only the contributor can open a dispute', r.status === 404, r.body)
+  r = await api('POST', '/disputes', { auth: tok.carol, body: { submissionId: bySubmitter('carol').id, summary: 'The write-up covers the requirements: design notes, edge cases and a migration plan.' } })
+  check('carol opens a dispute after the rejection', r.status === 201, r.body)
+  const disputeId = r.body.id
+  r = await api('POST', '/disputes', { auth: tok.carol, body: { submissionId: bySubmitter('carol').id, summary: 'The write-up covers the requirements: design notes, edge cases and a migration plan.' } })
+  check('one dispute per submission', r.status === 409, r.body)
+
+  r = await api('GET', `/disputes/${disputeId}`, { auth: tok.alice })
+  check('strangers cannot read a dispute', r.status === 404, r.body)
+  r = await api('GET', `/disputes/${disputeId}`, { auth: tok.creator })
+  check('the creator sees the dispute', r.status === 200 && r.body.role === 'creator' && r.body.dispute.reason === 'rejected', r.body)
+  r = await api('POST', `/disputes/${disputeId}/comments`, { auth: tok.creator, body: { body: 'The write-up did not cover the empty state, which was in the requirements.' } })
+  check('the creator answers', r.status === 201, r.body)
+  r = await api('POST', `/disputes/${disputeId}/comments`, { auth: tok.carol, body: { body: 'Section 4 covers the empty state.', links: ['https://example.com/notes/export#empty'] } })
+  check('carol adds evidence', r.status === 201, r.body)
+  r = await api('POST', `/admin/disputes/${disputeId}/comments`, { auth: tok.creator, body: { body: 'I am not an admin.' } })
+  check('only admins can mediate', r.status === 403, r.body)
+  r = await api('POST', `/admin/disputes/${disputeId}/comments`, { auth: tok.admin, body: { body: 'I will read both sides and decide.' } })
+  check('the mediator joins the thread', r.status === 201, r.body)
+  r = await api('GET', `/disputes/${disputeId}`, { auth: tok.carol })
+  check('the thread shows all three roles', r.body.role === 'contributor' && r.body.comments.map((c) => c.authorRole).join() === 'creator,contributor,mediator', r.body.comments)
+  r = await api('GET', '/admin/disputes?status=open', { auth: tok.admin })
+  check('admins list open disputes', r.body.items.some((d) => d.id === disputeId))
+  r = await api('POST', `/admin/disputes/${disputeId}/resolve`, { auth: tok.admin, body: { outcome: 'upheld', note: 'short' } })
+  check('a resolution needs an explanation', r.status === 400, r.body)
+  r = await api('POST', `/admin/disputes/${disputeId}/resolve`, { auth: tok.admin, body: { outcome: 'upheld', note: 'Section 4 does cover the empty state. The creator is asked to reconsider.' } })
+  check('the admin records an outcome', r.status === 200 && r.body.status === 'upheld', r.body)
+  r = await api('POST', `/disputes/${disputeId}/comments`, { auth: tok.carol, body: { body: 'Thanks.' } })
+  check('closed disputes take no more messages', r.status === 409, r.body)
+  r = await api('POST', `/admin/disputes/${disputeId}/resolve`, { auth: tok.admin, body: { outcome: 'dismissed', note: 'Changing my mind is not allowed.' } })
+  check('an outcome cannot be changed', r.status === 409, r.body)
+  r = await api('GET', '/me/notifications', { auth: tok.carol })
+  check('both sides are notified of the outcome', r.body.items.some((n) => n.kind === 'dispute_resolved'))
+  r = await api('GET', '/disputes/mine', { auth: tok.carol })
+  check('my disputes lists it with my role', r.body.items.length === 1 && r.body.items[0].role === 'contributor' && r.body.items[0].status === 'upheld', r.body)
+  r = await api('GET', `/creators/${accounts.creator.address}`)
+  check('the creator record counts disputes (non-binding)', r.body.disputesOpened >= 1 && r.body.disputesUpheld >= 1, r.body)
+
+  // ---- project webhooks ----------------------------------------------------------------------------------------
+  const hookUrl = 'http://127.0.0.1:9923/project-hook'
+  r = await api('POST', '/projects/acme/webhooks', { auth: tok.carol, body: { url: hookUrl, events: ['bounty_live'] } })
+  check('non-members cannot add webhooks', r.status === 403, r.body)
+  r = await api('POST', '/projects/acme/webhooks', { auth: tok.creator, body: { url: 'https://evil.example.com/hook', events: ['bounty_live'] } })
+  check('webhooks outside the allowlist are refused', r.status === 400, r.body)
+  r = await api('POST', '/projects/acme/webhooks', { auth: tok.creator, body: { url: hookUrl, events: [] } })
+  check('a webhook needs at least one event', r.status === 400, r.body)
+  const before = fakes.hooks.length
+  r = await api('POST', '/projects/acme/webhooks', { auth: tok.creator, body: { url: hookUrl, events: ['bounty_live', 'submission', 'winners_picked', 'reward_claimed'] } })
+  check('the owner adds a webhook and it receives a test message', r.status === 201 && r.body.testDelivered === true, r.body)
+  const hookId = r.body.id
+  check('the test message reached the receiver', fakes.hooks.length === before + 1 && fakes.hooks[before].includes('webhook connected'))
+  r = await api('GET', '/projects/acme/webhooks', { auth: tok.creator })
+  check('the list masks the address and shows delivery state', r.body.items.length === 1 && !JSON.stringify(r.body).includes('project-hook') && r.body.items[0].lastError === null, r.body)
+
+  const meta = { title: 'Write release notes for v2', description: 'Summarise what changed in v2 for users, with upgrade steps and links to the migration guide.', acceptanceCriteria: 'Clear notes, reviewed by a maintainer.', tags: ['docs'], links: [] }
+  await send('creator', board, boardArtifact.abi, 'createBounty', [meta.title, bountyCommitment(meta), usd(30), BigInt(Math.floor(Date.now() / 1000) + 3600), [10000]])
+  r = await api('POST', '/bounties', { auth: tok.creator, body: { ...meta, onchainId: 6, listing: { category: 'community', project: 'acme' } } })
+  check('bounty 6 published to the project', r.status === 201, r.body)
+  await send('creator', usdc, mock.abi, 'approve', [board, usd(30) + (usd(30) * 50n) / 10_000n])
+  await send('creator', board, boardArtifact.abi, 'fundBounty', [6n])
+  await api('POST', '/bounties/6/refresh')
+  r = await api('POST', '/admin/bounties/6/moderation', { auth: tok.admin, body: { decision: 'approved' } })
+  check('bounty 6 approved', r.status === 200, r.body)
+  await waitFor(async () => hookTexts().some((h) => h.includes('New bounty is live') && h.includes('Write release notes')), 'bounty_live webhook')
+  check('approval sends the bounty_live event', true)
+
+  const sub = { description: 'Release notes drafted with upgrade steps, a changelog and links to the migration guide.', pullRequestUrl: 'https://example.com/notes/v2', attachments: [] }
+  await send('alice', board, boardArtifact.abi, 'submitWork', [6n, submissionCommitment(6, sub)])
+  await waitFor(async () => hookTexts().some((h) => h.includes('New submission on "Write release notes')), 'submission webhook')
+  check('a chain submission sends the submission event', true)
+  await api('POST', '/bounties/6/submissions', { auth: tok.alice, body: sub })
+  await send('creator', board, boardArtifact.abi, 'approveWinners', [6n, [accounts.alice.address]])
+  await waitFor(async () => hookTexts().some((h) => h.includes('Winners picked for "Write release notes')), 'winners webhook')
+  check('picking winners sends the winners_picked event', true)
+  await send('alice', board, boardArtifact.abi, 'claimReward', [6n])
+  await waitFor(async () => hookTexts().some((h) => h.includes('prize was claimed on "Write release notes')), 'claim webhook')
+  check('a claim sends the reward_claimed event with its amount', hookTexts().some((h) => h.includes('(30 USDC)')))
+  r = await api('DELETE', `/projects/acme/webhooks/${hookId}`, { auth: tok.creator })
+  check('the owner removes the webhook', r.status === 200, r.body)
+  r = await api('DELETE', `/projects/acme/webhooks/${hookId}`, { auth: tok.creator })
+  check('removing it twice is a 404', r.status === 404)
+
+  // ---- analytics ------------------------------------------------------------------------------------------------
+  r = await api('GET', '/projects/acme/analytics')
+  check('analytics need a session', r.status === 401)
+  r = await api('GET', '/projects/acme/analytics', { auth: tok.carol })
+  check('analytics are for project members only', r.status === 403, r.body)
+  r = await api('GET', '/projects/acme/analytics', { auth: tok.creator })
+  const a = r.body
+  check('analytics summarise the project from stored data', r.status === 200 && a.bounties >= 3 && a.submissions >= 4 && a.withWinners >= 2 && BigInt(a.distributed) >= usd(95), a)
+  check('analytics include response and review times', typeof a.medianHoursToFirstSubmission === 'number' && a.reviewedSubmissions >= 1 && typeof a.medianReviewHours === 'number', a)
+  check('analytics include a 12 week series and categories', a.weekly.length === 12 && a.categories.some((c) => c.category === 'development'), a.weekly.length)
+
+  // ---- leaderboard -------------------------------------------------------------------------------------------------
+  r = await api('GET', '/leaderboard')
+  const top = r.body.items[0]
+  check('the leaderboard ranks by USDC received', r.status === 200 && top.wallet === accounts.alice.address.toLowerCase() && BigInt(top.earned) > usd(100), r.body.items)
+  check('the leaderboard is sorted', r.body.items.every((x, i, arr) => i === 0 || BigInt(arr[i - 1].earned) >= BigInt(x.earned)))
+  r = await api('GET', '/leaderboard?period=30d&category=community')
+  check('filters by period and category', r.status === 200 && r.body.period === '30d' && r.body.items.length === 1 && r.body.items[0].wallet === accounts.alice.address.toLowerCase(), r.body)
+  r = await api('POST', '/me/profile', { auth: tok.alice, body: { displayName: 'Alice Dev', githubUrl: 'https://github.com/alice-j', hideFromLeaderboard: true } })
+  check('alice opts out of the leaderboard', r.status === 200, r.body)
+  r = await api('GET', '/me/profile', { auth: tok.alice })
+  check('the opt-out is saved on her profile', r.body.profile.hideFromLeaderboard === true)
+  await new Promise((res) => setTimeout(res, 15_500))
+  r = await api('GET', '/leaderboard')
+  check('opted-out contributors disappear from the leaderboard', !r.body.items.some((x) => x.wallet === accounts.alice.address.toLowerCase()), r.body.items.length)
+  await api('POST', '/me/profile', { auth: tok.alice, body: { displayName: 'Alice Dev', githubUrl: 'https://github.com/alice-j', hideFromLeaderboard: false } })
+  void db
+}

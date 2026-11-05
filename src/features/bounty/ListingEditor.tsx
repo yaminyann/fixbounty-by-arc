@@ -19,6 +19,7 @@ function formFrom(bounty: BountyDetail): ListingForm {
     instructions: bounty.submissionInstructions ?? '',
     eligibility: bounty.eligibility ?? '',
     confidential: bounty.confidential,
+    acceptsApplications: bounty.acceptsApplications,
   }
 }
 

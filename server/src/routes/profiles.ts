@@ -163,12 +163,13 @@ myProfileRouter.get(
   '/',
   route(async (req: Request, res: Response) => {
     const row = await query(
-      `SELECT display_name AS "displayName", bio, skills, website_url AS "websiteUrl", github_url AS "githubUrl", avatar_url AS "avatarUrl"
+      `SELECT display_name AS "displayName", bio, skills, website_url AS "websiteUrl", github_url AS "githubUrl", avatar_url AS "avatarUrl",
+            hide_from_leaderboard AS "hideFromLeaderboard"
          FROM contributor_profiles WHERE user_id = $1`,
       [req.user!.id],
     )
     res.setHeader('Cache-Control', 'private, no-store')
-    res.json({ profile: row.rows[0] ?? { displayName: null, bio: null, skills: [], websiteUrl: null, githubUrl: null, avatarUrl: null } })
+    res.json({ profile: row.rows[0] ?? { displayName: null, bio: null, skills: [], websiteUrl: null, githubUrl: null, avatarUrl: null, hideFromLeaderboard: false } })
   }),
 )
 
@@ -179,6 +180,7 @@ const ProfileSchema = z.object({
   websiteUrl: optionalUrl,
   githubUrl: optionalUrl,
   avatarUrl: optionalUrl,
+  hideFromLeaderboard: z.boolean().default(false),
 })
 
 myProfileRouter.post(
@@ -187,11 +189,11 @@ myProfileRouter.post(
   route(async (req: Request, res: Response) => {
     const p = parse(ProfileSchema, req.body)
     await query(
-      `INSERT INTO contributor_profiles (user_id, display_name, bio, skills, website_url, github_url, avatar_url)
-       VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), $4, $5, $6, $7)
+      `INSERT INTO contributor_profiles (user_id, display_name, bio, skills, website_url, github_url, avatar_url, hide_from_leaderboard)
+       VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), $4, $5, $6, $7, $8)
        ON CONFLICT (user_id) DO UPDATE SET display_name = EXCLUDED.display_name, bio = EXCLUDED.bio, skills = EXCLUDED.skills,
-         website_url = EXCLUDED.website_url, github_url = EXCLUDED.github_url, avatar_url = EXCLUDED.avatar_url, updated_at = NOW()`,
-      [req.user!.id, p.displayName, p.bio, [...new Set(p.skills)], p.websiteUrl, p.githubUrl, p.avatarUrl],
+         website_url = EXCLUDED.website_url, github_url = EXCLUDED.github_url, avatar_url = EXCLUDED.avatar_url, hide_from_leaderboard = EXCLUDED.hide_from_leaderboard, updated_at = NOW()`,
+      [req.user!.id, p.displayName, p.bio, [...new Set(p.skills)], p.websiteUrl, p.githubUrl, p.avatarUrl, p.hideFromLeaderboard],
     )
     res.json({ ok: true })
   }),

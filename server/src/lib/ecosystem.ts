@@ -47,6 +47,7 @@ export const ListingSchema = z.object({
   submissionInstructions: z.string().trim().max(2_000).nullish(),
   eligibility: z.string().trim().max(1_000).nullish(),
   confidential: z.boolean().default(false),
+  acceptsApplications: z.boolean().default(false),
 })
 export type Listing = z.infer<typeof ListingSchema>
 
@@ -113,6 +114,7 @@ export async function resolveListing(
   submissionInstructions: string | null
   eligibility: string | null
   confidential: boolean
+  acceptsApplications: boolean
 }> {
   let category: string | null = null
   if (listing.category) {
@@ -155,6 +157,7 @@ export async function resolveListing(
     submissionInstructions: listing.submissionInstructions || null,
     eligibility: listing.eligibility || null,
     confidential: listing.confidential,
+    acceptsApplications: listing.acceptsApplications,
   }
 }
 

@@ -45,6 +45,8 @@ export interface BountySummary {
   skills: string[]
   workMode: WorkMode
   confidential: boolean
+  acceptsApplications: boolean
+  assignedCount: number
   projectSlug: string | null
   projectName: string | null
   milestoneCount: number

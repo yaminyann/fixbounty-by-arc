@@ -218,6 +218,7 @@ export interface MyProfile {
   websiteUrl: string | null
   githubUrl: string | null
   avatarUrl: string | null
+  hideFromLeaderboard: boolean
 }
 
 export interface OwnerWorkspace {
@@ -524,7 +525,7 @@ export function useUnreadCount(enabled: boolean) {
 // ----------------------------------------------------------------------------------------------
 
 /** Mutation that refreshes everything that can show the changed data. */
-function useWrite<TInput, TOutput = unknown>(fn: (input: TInput) => Promise<TOutput>, invalidate: unknown[][] = []) {
+export function useWrite<TInput, TOutput = unknown>(fn: (input: TInput) => Promise<TOutput>, invalidate: unknown[][] = []) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: fn,
@@ -573,6 +574,7 @@ export interface ListingInput {
   submissionInstructions: string | null
   eligibility: string | null
   confidential: boolean
+  acceptsApplications: boolean
 }
 
 export const useUpdateListing = () =>
@@ -625,7 +627,7 @@ export const useReviewComment = () =>
   )
 
 export const useSaveProfile = () =>
-  useWrite((input: { displayName: string; bio: string; skills: string[]; websiteUrl: string; githubUrl: string; avatarUrl: string }) => post('/me/profile', input), [['profile']])
+  useWrite((input: { displayName: string; bio: string; skills: string[]; websiteUrl: string; githubUrl: string; avatarUrl: string; hideFromLeaderboard: boolean }) => post('/me/profile', input), [['profile']])
 
 export function useMarkRead() {
   const qc = useQueryClient()
@@ -686,6 +688,8 @@ export interface CreatorRecord {
   open: number
   paidToWinners: string
   medianDaysToPickWinners: number | null
+  disputesOpened: number
+  disputesUpheld: number
 }
 
 export interface EncryptionKeyRecord {

@@ -18,6 +18,9 @@ import { projectsRouter, recurringRouter } from './routes/projects.js'
 import { reviewsRouter } from './routes/reviews.js'
 import { teamsRouter } from './routes/teams.js'
 import { alertsRouter, badgeRouter, creatorsRouter, encryptionRouter, submissionsRouter } from './routes/trust.js'
+import { applicationsRouter } from './routes/applications.js'
+import { adminDisputesRouter, disputesRouter } from './routes/disputes.js'
+import { leaderboardRouter, projectInsightsRouter } from './routes/insights.js'
 import { startIndexer } from './services/indexer.js'
 
 const app = express()
@@ -72,6 +75,7 @@ app.use('/api', (req: Request, res: Response, next: NextFunction) => {
 app.use('/api/auth', authRouter)
 app.use('/api/bounties', milestonesRouter)
 app.use('/api/bounties', teamsRouter)
+app.use('/api/bounties', applicationsRouter)
 app.use('/api/bounties', bountiesRouter)
 // Notifications and the profile form only need a Google session; the rest of /api/me also needs a linked wallet.
 app.use('/api/me/notifications', notificationsRouter)
@@ -81,12 +85,16 @@ app.use('/api/me/saved-searches', alertsRouter)
 app.use('/api/me', meRouter)
 app.use('/api/reviews', reviewsRouter)
 app.use('/api/projects', projectsRouter)
+app.use('/api/projects', projectInsightsRouter)
 app.use('/api/recurring', recurringRouter)
 app.use('/api/profiles', profilesRouter)
 app.use('/api/categories', categoriesRouter)
 app.use('/api/creators', creatorsRouter)
+app.use('/api/disputes', disputesRouter)
+app.use('/api/leaderboard', leaderboardRouter)
 app.use('/api/submissions', submissionsRouter)
 app.use('/api/badge', badgeRouter)
+app.use('/api/admin/disputes', adminDisputesRouter)
 app.use('/api/admin', adminRouter)
 app.use('/api', publicRouter)
 

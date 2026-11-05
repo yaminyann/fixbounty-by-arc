@@ -22,6 +22,8 @@ export const BOUNTY_LIST_COLUMNS = `
   b.skills,
   b.work_mode AS "workMode",
   b.confidential,
+  b.accepts_applications AS "acceptsApplications",
+  (SELECT COUNT(*)::int FROM bounty_applications a WHERE a.bounty_id = b.id AND a.status = 'approved') AS "assignedCount",
   (SELECT p.slug FROM projects p WHERE p.id = b.project_id) AS "projectSlug",
   (SELECT p.name FROM projects p WHERE p.id = b.project_id) AS "projectName",
   (SELECT COUNT(*)::int FROM bounty_milestones m WHERE m.bounty_id = b.id) AS "milestoneCount",

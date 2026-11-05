@@ -15,6 +15,7 @@ export interface ListingForm {
   instructions: string
   eligibility: string
   confidential: boolean
+  acceptsApplications: boolean
 }
 
 export const EMPTY_LISTING: ListingForm = {
@@ -27,6 +28,7 @@ export const EMPTY_LISTING: ListingForm = {
   instructions: '',
   eligibility: '',
   confidential: false,
+  acceptsApplications: false,
 }
 
 export function toListingInput(form: ListingForm): ListingInput {
@@ -40,6 +42,7 @@ export function toListingInput(form: ListingForm): ListingInput {
     submissionInstructions: form.instructions.trim() || null,
     eligibility: form.eligibility.trim() || null,
     confidential: form.confidential,
+    acceptsApplications: form.acceptsApplications,
   }
 }
 
@@ -117,6 +120,24 @@ export function ListingFields({ value, onChange, disabled, compact }: Props) {
           </Select>
         </Field>
       )}
+
+      <div className="rounded-lg border border-line bg-paper p-4">
+        <label className="flex items-start gap-3 text-sm">
+          <input
+            type="checkbox"
+            className="mt-1 size-4 accent-ink"
+            checked={value.acceptsApplications}
+            disabled={disabled}
+            onChange={(e) => set('acceptsApplications', e.target.checked)}
+          />
+          <span>
+            <span className="block font-medium">Ask contributors to apply first</span>
+            <span className="block text-mute">
+              Applicants tell you what they will do and you approve who you expect to hear from. This is a signal only: the contract still accepts a submission from any wallet.
+            </span>
+          </span>
+        </label>
+      </div>
 
       <div className="rounded-lg border border-line bg-paper p-4">
         <label className="flex items-start gap-3 text-sm">

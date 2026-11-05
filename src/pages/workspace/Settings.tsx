@@ -15,7 +15,7 @@ import { useEncryption } from '@/features/bounty/useEncryption'
 import { formatDate } from '@/lib/time'
 import { splitTags } from '@/lib/metadata'
 
-type ProfileValues = { displayName: string; bio: string; skills: string; websiteUrl: string; githubUrl: string; avatarUrl: string }
+type ProfileValues = { displayName: string; bio: string; skills: string; websiteUrl: string; githubUrl: string; avatarUrl: string; hideFromLeaderboard: boolean }
 
 function ProfileForm() {
   const query = useMyProfile(true)
@@ -28,6 +28,7 @@ function ProfileForm() {
     websiteUrl: p?.websiteUrl ?? '',
     githubUrl: p?.githubUrl ?? '',
     avatarUrl: p?.avatarUrl ?? '',
+    hideFromLeaderboard: p?.hideFromLeaderboard ?? false,
   }
   return <ProfileFields initial={initial} />
 }
@@ -86,6 +87,13 @@ function ProfileFields({ initial }: { initial: ProfileValues }) {
       <Field label="Avatar link" optional error={errors.avatarUrl} hint="A link to a square image. Leave empty to use your Google photo.">
         <Input type="url" value={form.avatarUrl} onChange={(e) => set({ avatarUrl: e.target.value })} />
       </Field>
+      <label className="flex items-start gap-3 text-sm">
+        <input type="checkbox" className="mt-1 size-4 accent-ink" checked={form.hideFromLeaderboard} onChange={(e) => set({ hideFromLeaderboard: e.target.checked })} />
+        <span>
+          <span className="block font-medium">Hide me from the leaderboard</span>
+          <span className="block text-mute">Your payouts stay on-chain and on your profile; you just will not be ranked.</span>
+        </span>
+      </label>
       <div className="flex flex-wrap items-center gap-3">
         <Button type="submit" variant="primary" loading={save.isPending}>
           Save profile

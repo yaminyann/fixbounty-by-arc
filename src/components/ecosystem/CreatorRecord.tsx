@@ -37,6 +37,13 @@ export function CreatorRecord({ wallet, compact = false }: { wallet: string; com
           hint="Prize taken back although contributors had submitted work."
         />
         {!compact && <Line label="Reclaimed with no submissions" value={r.reclaimedWithoutSubmissions} />}
+        {r.disputesOpened > 0 && (
+          <Line
+            label="Disputes (upheld / opened)"
+            value={`${r.disputesUpheld} / ${r.disputesOpened}`}
+            hint="Contributors asked an admin to mediate. Recorded on BountyFi, not binding, and not on-chain."
+          />
+        )}
         <Line label="Waiting for a decision" value={r.awaitingDecision} hint="Deadline passed, submissions received, no winner picked yet." />
         <Line label="Paid to winners" value={`${formatUsdc(r.paidToWinners, 2)} USDC`} />
         <Line

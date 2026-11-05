@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   Sparkles,
   Telescope,
+  Trophy,
   UserRound,
   Users,
   Code,
@@ -40,6 +41,7 @@ export const DISCOVER_NAV: NavItem[] = [
   { to: '/explore', label: 'Explore bounties', icon: Compass },
   { to: '/categories', label: 'Categories', icon: LayoutGrid },
   { to: '/projects', label: 'Projects', icon: FolderKanban, end: true },
+  { to: '/leaderboard', label: 'Leaderboard', icon: Trophy },
 ]
 
 /** Signed-in areas, shown in the workspace sidebar and the mobile menu. */

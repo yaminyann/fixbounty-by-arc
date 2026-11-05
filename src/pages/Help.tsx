@@ -89,6 +89,12 @@ export default function Help() {
             <Rule term="Recurring programs">
               A program is a plan for regular work such as weekly documentation. BountyFi never sends recurring transactions. Each cycle is published as a normal bounty that the owner funds.
             </Rule>
+            <Rule term="Applications">
+              A creator can ask contributors to apply first and approve the people they expect to hear from. It is a signal only: the contract accepts a submission from any wallet before the deadline.
+            </Rule>
+            <Rule term="Disputes">
+              If your work was rejected, a prize was taken back after you submitted, or the creator has not decided three days after the deadline, you can ask an admin to mediate. The outcome is a public record on the creator's profile. It is not binding and moves no money, because the contract has no dispute logic.
+            </Rule>
             <Rule term="Listing details">
               Category, difficulty, skills and project help people find a bounty. They are stored beside it, are not part of the on-chain text and the creator can edit them.
             </Rule>

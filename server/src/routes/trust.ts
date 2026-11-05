@@ -22,7 +22,7 @@ creatorsRouter.get(
     const wallet = String(req.params.wallet).toLowerCase()
     if (!WALLET_RE.test(wallet)) throw new HttpError(400, 'Invalid wallet address')
 
-    const [counts, paid, decide] = await Promise.all([
+    const [counts, paid, decide, disputes] = await Promise.all([
       query(
         `SELECT
            COUNT(*) FILTER (WHERE b.onchain_status IN (1, 2, 3, 4))::int AS funded,
@@ -49,9 +49,14 @@ creatorsRouter.get(
           WHERE b.creator_wallet = $1 AND ${PUBLIC_BOUNTY} AND b.approved_at IS NOT NULL`,
         [wallet],
       ),
+      query<{ opened: number; upheld: number }>(
+        `SELECT COUNT(*)::int AS opened, COUNT(*) FILTER (WHERE d.status = 'upheld')::int AS upheld
+           FROM disputes d JOIN bounties b ON b.id = d.bounty_id WHERE b.creator_wallet = $1 AND ${PUBLIC_BOUNTY}`,
+        [wallet],
+      ),
     ])
     res.setHeader('Cache-Control', 'public, max-age=10')
-    res.json({ wallet, ...counts.rows[0], paidToWinners: paid.rows[0].paid, medianDaysToPickWinners: decide.rows[0]?.days ?? null })
+    res.json({ wallet, ...counts.rows[0], paidToWinners: paid.rows[0].paid, medianDaysToPickWinners: decide.rows[0]?.days ?? null, disputesOpened: disputes.rows[0].opened, disputesUpheld: disputes.rows[0].upheld })
   }),
 )
 

@@ -106,7 +106,7 @@ function AccountMenu() {
         <span className="hidden max-w-[9rem] truncate sm:inline">
           {id.address ? <span className="num text-xs">{shortAddress(id.address)}</span> : (user?.displayName ?? 'Account')}
         </span>
-        {incomplete && <span className="rounded bg-signal px-1.5 py-0.5 text-xs">Finish setup</span>}
+        {incomplete && <span className="whitespace-nowrap rounded bg-signal px-1.5 py-0.5 text-xs">Finish setup</span>}
         <ChevronDown size={14} aria-hidden className={cn('text-mute transition-transform', open && 'rotate-180')} />
       </button>
       {open && (
@@ -118,7 +118,7 @@ function AccountMenu() {
   )
 }
 
-const TOP_LINK = 'rounded-md px-3 py-1.5 text-sm font-medium text-mute transition-colors hover:bg-ink/5 hover:text-ink'
+const TOP_LINK = 'whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium text-mute transition-colors hover:bg-ink/5 hover:text-ink'
 
 export function Header() {
   const { user } = useAuth()
@@ -129,7 +129,7 @@ export function Header() {
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4">
         <div className="flex items-center gap-6">
           <Logo />
-          <nav aria-label="Main" className="hidden items-center gap-0.5 md:flex">
+          <nav aria-label="Main" className="hidden items-center gap-0.5 xl:flex">
             {DISCOVER_NAV.map((item) => (
               <NavLink key={item.to} to={item.to} end={item.end} className={({ isActive }) => cn(TOP_LINK, isActive && 'bg-ink/5 text-ink')}>
                 {item.label.replace('Explore bounties', 'Explore')}
@@ -156,7 +156,7 @@ export function Header() {
           </div>
           <button
             type="button"
-            className="grid size-9 place-items-center rounded-md text-ink hover:bg-ink/5 md:hidden"
+            className="grid size-9 place-items-center rounded-md text-ink hover:bg-ink/5 xl:hidden"
             aria-label={drawer ? 'Close menu' : 'Open menu'}
             aria-expanded={drawer}
             aria-controls="mobile-menu"
@@ -168,7 +168,7 @@ export function Header() {
       </div>
 
       {drawer && (
-        <div id="mobile-menu" className="max-h-[calc(100dvh-3.5rem)] overflow-y-auto border-t border-line bg-surface px-4 pb-6 pt-3 md:hidden">
+        <div id="mobile-menu" className="max-h-[calc(100dvh-3.5rem)] overflow-y-auto border-t border-line bg-surface px-4 pb-6 pt-3 xl:hidden">
           <div className="mb-4 flex flex-wrap items-center gap-2 sm:hidden">
             <ButtonLink to="/create" size="sm" variant="accent" icon={<Plus size={15} aria-hidden />}>
               Post a bounty

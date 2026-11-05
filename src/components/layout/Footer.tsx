@@ -67,6 +67,11 @@ export function Footer() {
               </Link>
             </li>
             <li>
+              <Link className={LINK} to="/leaderboard">
+                Leaderboard
+              </Link>
+            </li>
+            <li>
               <Link className={LINK} to="/activity">
                 Activity
               </Link>
@@ -87,6 +92,11 @@ export function Footer() {
             <li>
               <Link className={LINK} to="/help">
                 How it works
+              </Link>
+            </li>
+            <li>
+              <Link className={LINK} to="/developers">
+                Developers
               </Link>
             </li>
             <ExternalItem href="https://faucet.circle.com">Get test USDC</ExternalItem>

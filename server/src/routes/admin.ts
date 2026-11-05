@@ -10,6 +10,7 @@ import { indexerStatus } from '../services/indexer.js'
 import { BOUNTY_LIST_COLUMNS, toTsQuery } from '../services/projections.js'
 import { notify } from '../services/notify.js'
 import { notifySavedSearches } from '../services/alerts.js'
+import { describeEvent, emitProjectEvent } from '../services/webhooks.js'
 
 export const adminRouter = Router()
 
@@ -213,7 +214,11 @@ adminRouter.post(
       })
     }
 
-    if (decision === 'approved') void notifySavedSearches(bounty.id)
+    if (decision === 'approved') {
+      void notifySavedSearches(bounty.id)
+      const live = await query<{ title: string; reward_amount: string }>('SELECT title, reward_amount::text AS reward_amount FROM bounties WHERE id = $1', [bounty.id])
+      if (live.rows[0]) void emitProjectEvent(bounty.id, 'bounty_live', describeEvent('bounty_live', live.rows[0].title, onchainId, { amount: live.rows[0].reward_amount }))
+    }
 
     res.json({ onchainId, moderationStatus: decision })
   }),

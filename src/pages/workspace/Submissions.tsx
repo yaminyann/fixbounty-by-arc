@@ -7,6 +7,9 @@ import { Badge, EmptyState, ErrorState, PageHeader, Skeleton } from '@/component
 import { Button, ButtonLink } from '@/components/ui/Button'
 import { Segmented, Tabs } from '@/components/ui/Tabs'
 import { ReviewDialog } from '@/features/bounty/ReviewDialog'
+import { DisputeBadge, DisputeDialog, OpenDisputeDialog, REASON_TEXT } from '@/features/bounty/DisputeThread'
+import { useNow } from '@/hooks/useNow'
+import { useMyDisputes } from '@/lib/api/collab'
 import { useIdentity } from '@/contexts/IdentityContext'
 import { useMyMilestoneSubmissions, useReviewQueue, type ReviewTargetType } from '@/lib/api/ecosystem'
 import { useMySubmissions } from '@/lib/api/queries'
@@ -14,7 +17,7 @@ import { Status, type ReviewStatus } from '@/lib/api/types'
 import { ordinal, shortAddress } from '@/lib/money'
 import { timeAgo } from '@/lib/time'
 
-type Tab = 'sent' | 'review'
+type Tab = 'sent' | 'review' | 'disputes'
 
 interface SentItem {
   key: string
@@ -28,9 +31,12 @@ interface SentItem {
   winner: number | null
   ready: boolean
   bountyStatus: Status
+  canDispute: boolean
 }
 
-function Sent() {
+function Sent({ onDisputeOpened }: { onDisputeOpened: (id: string) => void }) {
+  const now = useNow()
+  const [disputeFor, setDisputeFor] = useState<{ id: string; title: string } | null>(null)
   const submissions = useMySubmissions(true)
   const milestones = useMyMilestoneSubmissions(true)
   const [open, setOpen] = useState<{ type: ReviewTargetType; id: string } | null>(null)
@@ -48,6 +54,8 @@ function Sent() {
       winner: s.position,
       ready: s.notesVerified,
       bountyStatus: s.bountyStatus,
+      // The same conditions the server checks. It stays the judge and explains when a dispute is not allowed.
+      canDispute: s.notesVerified && (s.reviewStatus === 'rejected' || s.bountyStatus === Status.Refunded || (s.bountyStatus === Status.Funded && new Date(s.deadline).getTime() + 3 * 24 * 3600 * 1000 < now)),
     }))
     const b: SentItem[] = (milestones.data ?? []).map((m) => ({
       key: `m-${m.id}`,
@@ -61,9 +69,10 @@ function Sent() {
       winner: null,
       ready: true,
       bountyStatus: m.bountyStatus,
+      canDispute: false,
     }))
     return [...a, ...b].sort((x, y) => new Date(y.createdAt).getTime() - new Date(x.createdAt).getTime())
-  }, [submissions.data, milestones.data])
+  }, [submissions.data, milestones.data, now])
 
   if (submissions.isError || milestones.isError) return <ErrorState title="Your submissions did not load" onRetry={() => { void submissions.refetch(); void milestones.refetch() }} />
   if (submissions.isPending || milestones.isPending) return <Skeleton className="h-32 w-full" />
@@ -92,9 +101,16 @@ function Sent() {
               <p className="text-xs text-mute">Submitted {timeAgo(i.createdAt)}</p>
             </div>
             {i.ready ? (
-              <Button size="sm" onClick={() => setOpen({ type: i.type, id: i.id })}>
-                Open thread{i.commentCount > 0 ? ` (${i.commentCount})` : ''}
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                {i.canDispute && (
+                  <Button size="sm" variant="ghost" onClick={() => setDisputeFor({ id: i.id, title: i.title })}>
+                    Open a dispute
+                  </Button>
+                )}
+                <Button size="sm" onClick={() => setOpen({ type: i.type, id: i.id })}>
+                  Open thread{i.commentCount > 0 ? ` (${i.commentCount})` : ''}
+                </Button>
+              </div>
             ) : (
               <ButtonLink size="sm" to={`/bounty/${i.onchainId}`}>
                 Attach notes
@@ -104,6 +120,55 @@ function Sent() {
         ))}
       </ul>
       <ReviewDialog type={open?.type ?? 'submission'} id={open?.id ?? null} onClose={() => setOpen(null)} />
+      {disputeFor && (
+        <OpenDisputeDialog
+          submissionId={disputeFor.id}
+          title={disputeFor.title}
+          onClose={() => setDisputeFor(null)}
+          onOpened={(id) => {
+            setDisputeFor(null)
+            onDisputeOpened(id)
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+function Disputes() {
+  const query = useMyDisputes(true)
+  const [openId, setOpenId] = useState<string | null>(null)
+  if (query.isError) return <ErrorState title="Your disputes did not load" onRetry={() => void query.refetch()} />
+  if (query.isPending) return <Skeleton className="h-24 w-full" />
+  if (query.data.length === 0) {
+    return (
+      <EmptyState icon={Inbox} title="No disputes">
+        If your work was rejected, a prize was taken back after you submitted, or a creator has not decided, you can ask an admin to mediate from Sent by me.
+      </EmptyState>
+    )
+  }
+  return (
+    <>
+      <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface">
+        {query.data.map((d) => (
+          <li key={d.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5">
+            <div className="min-w-0 space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <DisputeBadge status={d.status} />
+                <Badge>{d.role === 'creator' ? 'Against your bounty' : 'You opened it'}</Badge>
+              </div>
+              <p className="truncate font-display font-semibold">{d.bountyTitle}</p>
+              <p className="text-xs text-mute">
+                {REASON_TEXT[d.reason]} · {timeAgo(d.createdAt)}
+              </p>
+            </div>
+            <Button size="sm" variant={d.status === 'open' ? 'primary' : 'secondary'} onClick={() => setOpenId(d.id)}>
+              Open{d.commentCount > 0 ? ` (${d.commentCount})` : ''}
+            </Button>
+          </li>
+        ))}
+      </ul>
+      <DisputeDialog id={openId} onClose={() => setOpenId(null)} />
     </>
   )
 }
@@ -170,7 +235,7 @@ function ToReview() {
 export default function Submissions() {
   const id = useIdentity()
   const [params, setParams] = useSearchParams()
-  const tab: Tab = params.get('tab') === 'review' ? 'review' : 'sent'
+  const tab: Tab = params.get('tab') === 'review' ? 'review' : params.get('tab') === 'disputes' ? 'disputes' : 'sent'
   const queue = useReviewQueue(id.status === 'ready')
   const waiting = (queue.data ?? []).filter((i) => i.reviewStatus === 'submitted' && [1, 2].includes(i.bountyStatus)).length
 
@@ -186,10 +251,11 @@ export default function Submissions() {
             items={[
               { value: 'sent', label: 'Sent by me' },
               { value: 'review', label: 'To review', count: waiting || undefined },
+              { value: 'disputes', label: 'Disputes' },
             ]}
           />
           <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-            {tab === 'sent' ? <Sent /> : <ToReview />}
+            {tab === 'sent' ? <Sent onDisputeOpened={() => setParams({ tab: 'disputes' }, { replace: true })} /> : tab === 'review' ? <ToReview /> : <Disputes />}
           </div>
         </div>
       </RequireIdentity>

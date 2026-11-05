@@ -14,6 +14,9 @@ const BountyDetail = lazy(() => import('@/pages/BountyDetail'))
 const CreateBounty = lazy(() => import('@/pages/CreateBounty'))
 const Activity = lazy(() => import('@/pages/Activity'))
 const Help = lazy(() => import('@/pages/Help'))
+const Leaderboard = lazy(() => import('@/pages/Leaderboard'))
+const Developers = lazy(() => import('@/pages/Developers'))
+const DisputePage = lazy(() => import('@/pages/workspace/DisputePage'))
 const NotFound = lazy(() => import('@/pages/NotFound'))
 
 const ContributorDashboard = lazy(() => import('@/pages/workspace/ContributorDashboard'))
@@ -40,6 +43,7 @@ const AdminAudit = lazy(() => import('@/pages/admin/Lists').then((m) => ({ defau
 const AdminSystem = lazy(() => import('@/pages/admin/Lists').then((m) => ({ default: m.System })))
 const AdminProjects = lazy(() => import('@/pages/admin/Catalog').then((m) => ({ default: m.Projects })))
 const AdminCategories = lazy(() => import('@/pages/admin/Catalog').then((m) => ({ default: m.Categories })))
+const AdminDisputes = lazy(() => import('@/pages/admin/Catalog').then((m) => ({ default: m.Disputes })))
 
 function ScrollToTop() {
   const { pathname } = useLocation()
@@ -65,6 +69,8 @@ export default function App() {
         <Route path="/create" element={<CreateBounty />} />
         <Route path="/activity" element={<Activity />} />
         <Route path="/help" element={<Help />} />
+        <Route path="/leaderboard" element={<Leaderboard />} />
+        <Route path="/developers" element={<Developers />} />
 
         {/* Signed-in workspace */}
         <Route element={<WorkspaceLayout />}>
@@ -79,6 +85,7 @@ export default function App() {
           <Route path="/rewards" element={<Rewards />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/disputes/:id" element={<DisputePage />} />
         </Route>
 
         {/* Old links keep working */}
@@ -93,6 +100,7 @@ export default function App() {
           <Route path="users" element={<AdminUsers />} />
           <Route path="projects" element={<AdminProjects />} />
           <Route path="categories" element={<AdminCategories />} />
+          <Route path="disputes" element={<AdminDisputes />} />
           <Route path="revenue" element={<AdminRevenue />} />
           <Route path="activity" element={<AdminActivity />} />
           <Route path="audit" element={<AdminAudit />} />

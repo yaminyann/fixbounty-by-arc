@@ -34,6 +34,7 @@ export function BountyRow({ bounty }: { bounty: BountySummary }) {
                 <Users size={12} aria-hidden /> Team
               </Badge>
             )}
+            {bounty.acceptsApplications && <Badge tone="info">Apply first{bounty.assignedCount > 0 ? ` · ${bounty.assignedCount} approved` : ''}</Badge>}
             {bounty.confidential && (
               <Badge>
                 <Lock size={12} aria-hidden /> Encrypted reports

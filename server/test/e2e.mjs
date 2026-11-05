@@ -16,6 +16,7 @@ import pg from 'pg'
 import { SignJWT, exportJWK, generateKeyPair } from 'jose'
 import { runEcosystemChecks } from './ecosystem.mjs'
 import { runTrustChecks, startFakes } from './trust.mjs'
+import { runInsightChecks } from './insights.mjs'
 import { createPublicClient, createWalletClient, http as viemHttp, defineChain } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 
@@ -356,8 +357,9 @@ try {
   console.log('\nIndexer')
   await waitFor(async () => {
     const x = await db.query(`SELECT onchain_status FROM bounties WHERE onchain_id = 1`)
-    return x.rows[0]?.onchain_status === 3
-  }, 'indexer to mark bounty claimed')
+    const claims = await db.query("SELECT COUNT(*)::int AS n FROM bounty_activity WHERE onchain_id = 1 AND kind = 'claimed'")
+    return x.rows[0]?.onchain_status === 3 && claims.rows[0].n === 2
+  }, 'indexer to mark bounty claimed and record both claims')
   const detail = await api('GET', `/bounties/${onchainId}`)
   check('bounty status is Claimed', detail.body.bounty.status === 3)
   check('winners recorded in position order', detail.body.bounty.winners[0] === accounts.bob.address.toLowerCase() && detail.body.bounty.winners[1] === accounts.alice.address.toLowerCase())
@@ -368,7 +370,7 @@ try {
 
   const fees = await waitFor(async () => {
     const x = await db.query(`SELECT kind, SUM(amount)::text AS total, COUNT(*)::int AS n FROM platform_fees GROUP BY kind ORDER BY kind`)
-    return x.rows.length === 2 ? x.rows : null
+    return x.rows.length === 2 && x.rows[1].n === 2 ? x.rows : null
   }, 'platform fees to be indexed')
   check('fee ledger: one 0.5% post fee', fees[0].kind === 0 && BigInt(fees[0].total) === fee && fees[0].n === 1, fees)
   check('fee ledger: two 5% claim fees', fees[1].kind === 1 && BigInt(fees[1].total) === claimFees && fees[1].n === 2, fees)
@@ -417,6 +419,7 @@ try {
   check(`60 parallel detail reads finish under 1.5s (${Date.now() - t1}ms)`, Date.now() - t1 < 1500)
   await runEcosystemChecks({ api, tok, accounts, send, board, boardArtifact, usdc, mock, bountyCommitment, submissionCommitment, check, waitFor, db, reward })
   await runTrustChecks({ api, tok, accounts, send, board, boardArtifact, usdc, mock, bountyCommitment, submissionCommitment, check, waitFor, db, apiBase: API }, fakes)
+  await runInsightChecks({ api, tok, accounts, send, board, boardArtifact, usdc, mock, bountyCommitment, submissionCommitment, check, waitFor, db, apiBase: API }, fakes)
 } catch (err) {
   failures += 1
   console.error('\nE2E aborted:', err)
